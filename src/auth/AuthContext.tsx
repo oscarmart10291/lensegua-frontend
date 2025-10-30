@@ -1,12 +1,12 @@
+// src/auth/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { onAuthStateChanged, User } from "firebase/auth";
 import {
-  GoogleAuthProvider,
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-  User,
-} from "firebase/auth";
-import { auth, googleProvider } from "../lib/firebase";
+  auth,
+  loginWithGoogle,
+  logout as firebaseLogout,
+  completeRedirectIfAny,
+} from "../lib/firebase"; // ✅ ruta relativa correcta
 
 type AuthCtx = {
   user: User | null;
@@ -23,33 +23,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoading(false);
+    // Completa login por redirect (si lo hubo)
+    completeRedirectIfAny().finally(() => {
+      // Escucha cambios en la autenticación
+      const unsub = onAuthStateChanged(auth, (u) => {
+        setUser(u ?? null);
+        setLoading(false);
+      });
+      return unsub;
     });
-    return unsub;
   }, []);
 
+  // ====== Login con Google ======
   const login = async () => {
-    const provider = (googleProvider ?? new GoogleAuthProvider());
-    await signInWithPopup(auth, provider);
+    try {
+      await loginWithGoogle();
+    } catch (err) {
+      console.error("Error al iniciar sesión con Google:", err);
+    }
   };
 
+  // ====== Logout ======
   const logout = async () => {
-    await signOut(auth);
+    try {
+      await firebaseLogout();
+    } catch (err) {
+      console.error("Error al cerrar sesión:", err);
+    }
   };
 
+  // ====== Obtener ID Token ======
   const getIdToken = async () => {
     const u = auth.currentUser;
     return u ? await u.getIdToken() : null;
   };
 
-  const value: AuthCtx = { user, loading, login, logout, getIdToken };
+  const value: AuthCtx = {
+    user,
+    loading,
+    login,
+    logout,
+    getIdToken,
+  };
+
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
+// ====== Hook personalizado ======
 export function useAuth() {
   const ctx = useContext(Ctx);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  if (!ctx) {
+    throw new Error("useAuth debe usarse dentro de un <AuthProvider>");
+  }
   return ctx;
 }
