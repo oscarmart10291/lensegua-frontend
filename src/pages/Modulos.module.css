@@ -1,0 +1,179 @@
+:root{
+  --bg:#f8fafc;
+  --card:#ffffff;
+  --text:#0f172a;
+  --muted:#475569;
+  --line:#e5e7eb;
+  --shadow:0 10px 30px rgba(2,6,23,.08);
+  --primary:#2563eb;
+  --success:#10b981;
+  --warn-bg:#fef3c7;
+  --warn-text:#b45309;
+  --warn-line:#fde68a;
+}
+
+/* Contenedor amplio: ocupa casi todo el ancho */
+.container{
+  width:100%;
+  max-width:min(1640px, 96vw);
+  margin:0 auto;
+  padding:24px clamp(12px, 2vw, 28px);
+}
+
+/* ===== Hero superior alegre ===== */
+.hero{
+  background:
+    radial-gradient(600px 260px at 100% 0%, #d1fae5 0%, transparent 60%),
+    radial-gradient(700px 300px at 0% 100%, #dbeafe 0%, transparent 60%),
+    #f8fafc;
+  border:1px solid var(--line);
+  border-radius:18px;
+  padding:22px clamp(14px, 2vw, 24px);
+  margin-bottom:14px;
+  box-shadow:var(--shadow);
+}
+.heroText{max-width:90ch;}
+.heroTitle{
+  margin:0 0 6px 0;
+  font-weight:900;
+  letter-spacing:-.02em;
+  color:var(--text);
+  font-size:clamp(26px, 3.4vw, 36px);
+}
+.heroSubtitle{
+  margin:0;
+  color:var(--muted);
+  font-size:clamp(15px, 1.6vw, 18px);
+}
+
+/* ===== Grid de módulos ===== */
+.moduleGrid{
+  list-style:none;
+  margin:18px 0 0 0;
+  padding:0;
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap:20px;
+}
+.noBullet{ list-style:none; }
+
+/* Tarjeta de módulo */
+.moduleCard{
+  background: linear-gradient(180deg,#ffffff, #fcfcff);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:16px;
+  box-shadow:var(--shadow);
+  display:grid;
+  gap:8px;
+  transition:transform .06s ease, box-shadow .2s, filter .2s, opacity .2s;
+}
+.moduleCard:hover{ transform: translateY(-2px); box-shadow:0 16px 44px rgba(2,6,23,.12); }
+
+/* Estilo de bloqueo */
+.lockedCard{
+  filter: grayscale(1);
+  opacity: .6;
+  pointer-events: none; /* evita clic */
+}
+.lockedBadge{
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border:1px solid var(--warn-line);
+  border-radius:999px;
+  padding:6px 10px;
+  font-size:12.5px;
+  font-weight:800;
+}
+
+.moduleHead{ display:flex; align-items:center; gap:12px; }
+.moduleIcon{
+  width:48px; height:48px; border-radius:14px;
+  display:grid; place-items:center; font-size:22px;
+  background:linear-gradient(135deg,#f1f5f9,#f8fafc);
+  border:1px solid var(--line);
+}
+.moduleTitle{ font-weight:800; color:var(--text); }
+.moduleSubtitle{ color:var(--muted); font-size:13.5px; }
+
+.moduleMeta{
+  margin-top:6px;
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+}
+.chip{
+  border:1px solid var(--line);
+  background:#fff;
+  color:#64748b;
+  border-radius:999px;
+  padding:7px 11px;
+  font-size:13px;
+  display:inline-block;
+}
+
+/* ===== Detalle ===== */
+.detailHeaderTop{ margin-top:4px; }
+.pageTitle{
+  margin:0 0 4px 0;
+  font-weight:900;
+  letter-spacing:-.02em;
+  color:var(--text);
+  font-size:clamp(22px, 2.6vw, 30px);
+}
+.pageSubtitle{
+  margin:0 0 8px 0;
+  color:var(--muted);
+  font-size:clamp(14px, 1.5vw, 16px);
+}
+.detailHeader{
+  display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  margin:6px 0 6px 0;
+}
+.resetBtn{
+  border:1px solid var(--line);
+  background:#fff;
+  color:#0f172a;
+  padding:8px 12px;
+  border-radius:10px;
+  cursor:pointer;
+  font-size:13px;
+  font-weight:700;
+}
+
+/* ===== Lecciones ===== */
+.lessonList{
+  list-style:none;
+  margin:14px 0 0 0;
+  padding:0;
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap:18px;
+}
+.lessonCard{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:16px;
+  box-shadow:var(--shadow);
+}
+.lessonRow{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.lessonTitle{ color:var(--text); font-weight:800; }
+.lessonHint{ margin:8px 0 0; color:var(--muted); }
+
+.lessonBtn{
+  border:1px solid var(--line);
+  background:#fff;
+  color:#0f172a;
+  padding:9px 12px;
+  border-radius:10px;
+  cursor:pointer;
+  font-size:13px;
+  font-weight:700;
+}
+.lessonBtnDone{
+  background:var(--success); color:#fff; border-color:var(--success);
+}
+
+/* ===== Responsivo extra ancho ===== */
+@media (min-width: 1600px){
+  .moduleGrid{ grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+}

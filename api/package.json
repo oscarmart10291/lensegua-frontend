@@ -1,0 +1,27 @@
+{
+  "name": "lensegua-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "API de LENSEGUA (Express + PostgreSQL + Firebase Admin)",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only index.ts",
+    "build": "tsc -p .",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.5.0",
+    "pg": "^8.16.3",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.2"
+  }
+}
