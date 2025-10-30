@@ -1,0 +1,22 @@
+[
+  {
+    "origin": [
+      "https://lensegua-frontend.netlify.app",
+      "http://localhost:5173",
+      "http://127.0.0.1:5173"
+    ],
+    "method": ["GET", "HEAD", "OPTIONS"],
+    "responseHeader": [
+      "Content-Type",
+      "Authorization",
+      "x-goog-meta-*",
+      "x-goog-generation",
+      "x-goog-metageneration",
+      "x-goog-stored-content-length",
+      "x-goog-hash",
+      "x-goog-storage-class",
+      "x-goog-stored-content-encoding"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]
