@@ -16,14 +16,18 @@ import Leccion from "./pages/Leccion";
 import Test from "./pages/Test";
 import Perfil from "./pages/Perfil";
 
-import { ProgressProvider } from "./contexts/ProgressContext"; // ⬅️ NUEVO
+import { ProgressProvider } from "./contexts/ProgressContext";
+import { completeRedirectIfAny } from "./lib/firebase"; // ⬅️ Importa la función
 import "./index.css";
 
+// Ejecuta al inicio para completar redirecciones de Google Sign-In
+completeRedirectIfAny();
+
 const router = createBrowserRouter([
-  // Pública
+  // Rutas públicas
   { path: "/", element: <Inicio /> },
 
-  // Protegidas (requieren sesión)
+  // Rutas protegidas (requieren sesión)
   {
     element: <RequireAuth />,
     children: [
@@ -42,7 +46,6 @@ const router = createBrowserRouter([
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <AuthProvider>
-      {/* ⬇️ Contexto de progreso disponible en toda el área protegida */}
       <ProgressProvider>
         <RouterProvider router={router} />
       </ProgressProvider>
