@@ -12,53 +12,71 @@ import {
 } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
-// ====== Variables de entorno (Vite) ======
-const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID as string;
+// ===== Helpers =====
+function normalizeBucket(name: string | undefined, projectId: string): string {
+  // Si viene vacío, usa el bucket real de Firebase Storage
+  let bucket =
+    name?.trim() ||
+    // ⚠️ En tu proyecto el bucket real es *.firebasestorage.app
+    `${projectId}.firebasestorage.app`;
 
-// Usa valores de entorno o defaults seguros
+  // Si alguien puso *.appspot.com, cámbialo al dominio correcto
+  bucket = bucket.replace(/\.appspot\.com$/i, ".firebasestorage.app");
+
+  return bucket;
+}
+
+// ===== Env vars (Vite) =====
+const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID as string;
+const apiKey = import.meta.env.VITE_FIREBASE_API_KEY as string;
+const authDomain =
+  (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined) ||
+  `${projectId}.firebaseapp.com`;
+const storageBucket = normalizeBucket(
+  import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string | undefined,
+  projectId
+);
+const messagingSenderId = import.meta.env
+  .VITE_FIREBASE_MESSAGING_SENDER_ID as string;
+const appId = import.meta.env.VITE_FIREBASE_APP_ID as string;
+
+// ===== Config =====
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string,
-  authDomain:
-    (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined) ||
-    `${projectId}.firebaseapp.com`,
+  apiKey,
+  authDomain,
   projectId,
-  storageBucket:
-    (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string | undefined) ||
-    `${projectId}.appspot.com`,
-  messagingSenderId: import.meta.env
-    .VITE_FIREBASE_MESSAGING_SENDER_ID as string,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID as string,
+  storageBucket, // <- ya normalizado a *.firebasestorage.app
+  messagingSenderId,
+  appId,
 };
 
-// ====== Inicialización segura ======
+// ===== Init =====
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 
-// ====== Provider de Google ======
+// ===== Google provider =====
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
-// ====== Persistencia de sesión (localStorage) ======
-setPersistence(auth, browserLocalPersistence).catch((err) => {
-  console.warn("No se pudo establecer persistencia:", err.message);
-});
+// Persistencia local
+setPersistence(auth, browserLocalPersistence).catch((err) =>
+  console.warn("No se pudo establecer persistencia:", err?.message || err)
+);
 
-// ====== Funciones de autenticación ======
+// ===== Auth helpers =====
 export async function loginWithGoogle() {
   try {
     await signInWithPopup(auth, googleProvider);
   } catch (err: any) {
     const code = err?.code as string | undefined;
-
-    // Fallback automático si el popup falla o se bloquea
     if (
       code === "auth/popup-closed-by-user" ||
       code === "auth/popup-blocked" ||
       code === "auth/cancelled-popup-request" ||
       code === "auth/operation-not-supported-in-this-environment"
     ) {
-      console.warn("Popup bloqueado o cerrado, usando redirect...");
+      console.warn("Popup bloqueado/cerrado, usando redirect…");
       await signInWithRedirect(auth, googleProvider);
     } else {
       console.error("Error en login con Google:", code, err?.message);
@@ -67,39 +85,30 @@ export async function loginWithGoogle() {
   }
 }
 
-// Completa flujos de redirección (debe llamarse al iniciar la app)
 export async function completeRedirectIfAny() {
   try {
     await getRedirectResult(auth);
   } catch (err: any) {
-    console.warn("No hay redirect pendiente o falló:", err.message);
+    // No hay redirect pendiente o falló; no interrumpe UX
+    console.warn("Redirect no completado:", err?.message || err);
   }
 }
 
-// Cierra la sesión del usuario
 export async function logout() {
   try {
     await signOut(auth);
   } catch (err: any) {
-    console.error("Error al cerrar sesión:", err.message);
+    console.error("Error al cerrar sesión:", err?.message || err);
   }
 }
 
-// ====== Debug opcional (quitar en producción) ======
-// Muestra un resumen de configuración para verificar que las envs se inyectan bien
-if (import.meta.env.DEV || window.location.hostname.includes("netlify")) {
-  console.log("✅ Firebase config cargada:", {
-    projectId: firebaseConfig.projectId,
-    authDomain: firebaseConfig.authDomain,
-    storageBucket: firebaseConfig.storageBucket,
-    apiKeyEndsWith: firebaseConfig.apiKey?.slice(-6),
+// ===== Debug breve (puedes quitarlo luego) =====
+if (typeof window !== "undefined") {
+  const ends = (apiKey || "").slice(-6);
+  console.log("🔥 Firebase config:", {
+    projectId,
+    authDomain,
+    storageBucket,
+    apiKeyEndsWith: ends,
   });
 }
-
-// DEBUG (quitar luego)
-console.log("🔥 Firebase config (prod):", {
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  apiKeyEndsWith: (import.meta.env.VITE_FIREBASE_API_KEY || "").slice(-6),
-});
