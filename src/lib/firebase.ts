@@ -95,3 +95,11 @@ if (import.meta.env.DEV || window.location.hostname.includes("netlify")) {
     apiKeyEndsWith: firebaseConfig.apiKey?.slice(-6),
   });
 }
+
+// DEBUG (quitar luego)
+console.log("🔥 Firebase config (prod):", {
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  apiKeyEndsWith: (import.meta.env.VITE_FIREBASE_API_KEY || "").slice(-6),
+});
