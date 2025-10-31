@@ -5,14 +5,13 @@ import {
   GoogleAuthProvider,
   setPersistence,
   browserLocalPersistence,
+  indexedDBLocalPersistence,
+  inMemoryPersistence,
+  initializeAuth,
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signOut,
-  // ===== añadido =====
-  initializeAuth,
-  indexedDBLocalPersistence,
-  inMemoryPersistence,
   Auth,
 } from "firebase/auth";
 import { getStorage } from "firebase/storage";
@@ -44,7 +43,7 @@ const firebaseConfig = {
   apiKey,
   authDomain,
   projectId,
-  storageBucket, // <- *.firebasestorage.app
+  storageBucket,
   messagingSenderId,
   appId,
 };
@@ -52,10 +51,9 @@ const firebaseConfig = {
 // ===== Init =====
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// ---- Auth con persistencias seguras (sin cambiar tu API) ----
+// ===== Auth con persistencias seguras =====
 let _auth: Auth;
 try {
-  // initializeAuth permite pasar varias persistencias para entornos con restricciones (iOS webview)
   _auth = initializeAuth(app, {
     persistence: [
       indexedDBLocalPersistence,
@@ -64,37 +62,39 @@ try {
     ],
   });
 } catch {
-  // Si ya estaba inicializado (HMR) caemos al getAuth
   _auth = getAuth(app);
 }
 export const auth = _auth;
-
 export const storage = getStorage(app);
 
-// ===== Google provider =====
+// ===== Google Provider =====
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
-// Persistencia local (intentamos forzar la mejor disponible, manteniendo tu llamada existente)
+// ===== Persistencia local segura =====
 setPersistence(auth, indexedDBLocalPersistence)
   .catch(() => setPersistence(auth, browserLocalPersistence))
+  .catch(() => setPersistence(auth, inMemoryPersistence))
   .catch((err) =>
     console.warn("No se pudo establecer persistencia:", err?.message || err)
   );
 
-// ===== Auth helpers =====
+// ===== Login con Google =====
 export async function loginWithGoogle() {
   try {
+    if (!authDomain || authDomain.trim() === "") {
+      throw new Error("Firebase AuthDomain no configurado. Revisa tus variables .env");
+    }
     await signInWithPopup(auth, googleProvider);
   } catch (err: any) {
-    const code = err?.code as string | undefined;
+    const code = err?.code || "";
     if (
       code === "auth/popup-closed-by-user" ||
       code === "auth/popup-blocked" ||
       code === "auth/cancelled-popup-request" ||
       code === "auth/operation-not-supported-in-this-environment"
     ) {
-      console.warn("Popup bloqueado/cerrado, usando redirect…");
+      console.warn("Popup bloqueado/cerrado, usando redirect...");
       await signInWithRedirect(auth, googleProvider);
     } else {
       console.error("Error en login con Google:", code, err?.message);
@@ -103,20 +103,22 @@ export async function loginWithGoogle() {
   }
 }
 
+// ===== Completar redirect (si lo hubo) =====
 export async function completeRedirectIfAny() {
   try {
     await getRedirectResult(auth);
   } catch (err: any) {
     const msg = String(err?.message || "");
-    // En iOS webviews / storage particionado, Firebase lanza este mensaje.
-    // Lo ignoramos silenciosamente para no romper la UX.
     if (msg.includes("missing initial state")) {
+      // Safari / iOS WebView: no interrumpir UX
+      console.warn("Ignorado: missing initial state (entorno iOS aislado)");
       return;
     }
     console.warn("Redirect no completado:", err?.message || err);
   }
 }
 
+// ===== Logout =====
 export async function logout() {
   try {
     await signOut(auth);
