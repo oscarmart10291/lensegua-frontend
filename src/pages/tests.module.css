@@ -1,0 +1,214 @@
+/* ===== Tests — estilo claro y responsive ===== */
+
+/* Layout general */
+.wrapper {
+  min-height: 100vh;
+  width: 100%;
+  background: #f8fafc;           /* blanco suave */
+  color: #0f172a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6rem 1rem 3rem;        /* espacio por navbar fijo */
+  box-sizing: border-box;
+}
+
+/* extra padding-top por navbar fixed */
+.withNavbar { padding-top: 5.25rem; }
+
+/* ===== Header ===== */
+.header {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto 1.5rem;
+  text-align: center;
+}
+
+.headerTop { margin-bottom: .8rem; }
+
+.title {
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 900;
+  margin: 0 0 .25rem;
+  color: #0b1220;
+}
+.subtitle {
+  color: #475569;
+  font-weight: 500;
+  margin: 0;
+}
+
+/* ===== Cards de estadísticas ===== */
+.statsRow {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto 1.8rem;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.2rem;
+}
+
+.statCard {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: .95rem 1.15rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .8rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,.04);
+}
+
+.statIconWrap {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.statMeta { text-align: left; }
+
+.statLabel {
+  color: #64748b;
+  font-size: .8rem;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.statValue { font-size: 1.35rem; font-weight: 900; color: #0f172a; }
+.statValueSm { font-size: .95rem; font-weight: 700; color: #334155; }
+
+.medalStack { display: inline-flex; gap: 6px; }
+.medal {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(0,0,0,.06);
+}
+.gold   { background: linear-gradient(180deg,#facc15,#f59e0b); }
+.silver { background: linear-gradient(180deg,#cbd5e1,#94a3b8); }
+.bronze { background: linear-gradient(180deg,#f59e0b,#92400e); }
+
+/* ===== Grid de módulos ===== */
+.grid {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+
+  /* 4 cols desktop, 3 tablet grande, 2 tablet, 1 móvil */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.25rem;                  /* más aire entre tarjetas */
+}
+
+/* ===== Tarjeta de módulo ===== */
+.card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 230px;             /* altura consistente */
+  box-shadow: 0 4px 14px rgba(0,0,0,.05);
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.card:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,.07); }
+
+.cardHeader {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: .7rem;
+  margin-bottom: .5rem;
+}
+
+.iconWrap {
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border-radius: 9px;
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.cardHeadings { min-width: 0; }
+.cardTitle   { margin: 0; font-size: 1.05rem; font-weight: 800; color: #0f172a; }
+.cardSubtitle{
+  margin: .15rem 0 0;
+  color: #64748b;
+  font-size: .9rem;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rewardArea { display: flex; align-items: center; justify-content: flex-end; }
+.badge {
+  display: inline-flex; align-items: center; gap: .35rem;
+  padding: .28rem .55rem; border-radius: 8px; font-size: .8rem; font-weight: 800; color: #fff;
+}
+.badgeMuted { color: #94a3b8; font-weight: 700; font-size: .85rem; }
+
+/* Progreso */
+.progressRow {
+  display: flex; align-items: center; gap: .5rem; justify-content: space-between;
+}
+.progressBar {
+  flex: 1; height: 8px; border-radius: 999px; overflow: hidden;
+  background: #e2e8f0; margin: .6rem 0 .4rem;
+}
+.progressFill { height: 100%; width: 0%; background: linear-gradient(90deg,#3b82f6,#22c55e); transition: width .3s; }
+.progressLabel { font-size: .8rem; color: #475569; font-weight: 700; }
+
+/* Meta y acción */
+.metaRow {
+  display: flex; flex-wrap: wrap; gap: .45rem;
+  color: #1e293b; font-weight: 700; margin-top: .2rem;
+}
+.pill {
+  background: #f1f5f9; border: 1px solid #e2e8f0;
+  border-radius: 999px; padding: .32rem .7rem; font-size: .8rem;
+}
+
+.actionRow { display: flex; justify-content: flex-end; margin-top: .6rem; }
+.btnPrimary {
+  display: inline-flex; align-items: center; gap: .35rem;
+  background: linear-gradient(90deg,#3b82f6,#22c55e);
+  color: #fff; border: none; border-radius: 10px;
+  font-weight: 800; font-size: .9rem; padding: .5rem 1rem; cursor: pointer;
+}
+.btnPrimary:hover { opacity: .9; }
+.lockedNote { margin-left: .5rem; font-size: .78rem; color: #94a3b8; }
+
+.isLocked { opacity: .65; }
+
+/* ===== Breakpoints ===== */
+
+/* <= 1200px: 3 columnas en grid de módulos */
+@media (max-width: 1200px) {
+  .grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
+}
+
+/* <= 992px: 2 columnas + stats en 2 */
+@media (max-width: 992px) {
+  .statsRow { grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+  .grid { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 1rem; }
+  .wrapper { padding: 5.5rem 1rem 2.5rem; }
+}
+
+/* <= 768px: 1 columna + stats apiladas */
+@media (max-width: 768px) {
+  .statsRow { grid-template-columns: 1fr; gap: .9rem; }
+  .grid { grid-template-columns: 1fr; gap: 1rem; max-width: 560px; }
+  .card { min-height: 210px; }
+  .title { font-size: clamp(1.8rem, 5vw, 2.2rem); }
+}
+
+/* <= 480px: compactar paddings */
+@media (max-width: 480px) {
+  .wrapper { padding-left: .75rem; padding-right: .75rem; }
+  .statCard { padding: .8rem 1rem; }
+  .card { padding: .9rem; }
+}

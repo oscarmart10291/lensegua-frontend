@@ -13,11 +13,13 @@ import RequireAuth from "./auth/RequireAuth";
 import Inicio from "./pages/Inicio";
 import Modulos from "./pages/Modulos";
 import Leccion from "./pages/Leccion";
-import Test from "./pages/Test";
+// ❌ Quitamos Test (se elimina la vista individual)
+// import Test from "./pages/Test";
 import Perfil from "./pages/Perfil";
+import Tests from "./pages/tests"; // ✅ Vista general de resultados/progreso
 
 import { ProgressProvider } from "./contexts/ProgressContext";
-import { completeRedirectIfAny } from "./lib/firebase"; // ⬅️ Importa la función
+import { completeRedirectIfAny } from "./lib/firebase";
 import "./index.css";
 
 // Ejecuta al inicio para completar redirecciones de Google Sign-In
@@ -34,7 +36,14 @@ const router = createBrowserRouter([
       { path: "/modulos", element: <Modulos /> },
       { path: "/modulos/:moduleKey", element: <Modulos /> },
       { path: "/modulos/:moduleKey/leccion/:lessonKey", element: <Leccion /> },
-      { path: "/test/:moduleKey", element: <Test /> },
+
+      // ✅ Vista general de Tests
+      { path: "/tests", element: <Tests /> },
+
+      // 🔁 Redirecciones de rutas antiguas
+      { path: "/test", element: <Navigate to="/tests" replace /> },
+      { path: "/test/:moduleKey", element: <Navigate to="/tests" replace /> },
+
       { path: "/perfil", element: <Perfil /> },
     ],
   },
@@ -43,7 +52,7 @@ const router = createBrowserRouter([
   { path: "*", element: <Navigate to="/" replace /> },
 ]);
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <AuthProvider>
       <ProgressProvider>

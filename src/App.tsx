@@ -5,8 +5,9 @@ import RequireAuth from "./auth/RequireAuth";
 import Inicio from "./pages/Inicio";
 import Modulos from "./pages/Modulos";
 import Leccion from "./pages/Leccion";
-import Test from "./pages/Test";
+// import Test from "./pages/Test";  // ❌ ya no existe
 import Perfil from "./pages/Perfil";
+import Tests from "./pages/tests";       // ✅ vista general (progreso/medallas)
 
 export default function App() {
   return (
@@ -17,14 +18,17 @@ export default function App() {
 
         {/* Protegidas (requieren sesión) */}
         <Route element={<RequireAuth />}>
-          {/* Lista de módulos */}
           <Route path="/modulos" element={<Modulos />} />
-          {/* Detalle de un módulo */}
           <Route path="/modulos/:moduleKey" element={<Modulos />} />
-          {/* Contenido educativo de una lección */}
           <Route path="/modulos/:moduleKey/leccion/:lessonKey" element={<Leccion />} />
 
-          <Route path="/test/:moduleKey" element={<Test />} />
+          {/* ✅ Vista general de resultados/progreso */}
+          <Route path="/tests" element={<Tests />} />
+
+          {/* 🔁 Redirecciones de rutas antiguas */}
+          <Route path="/test" element={<Navigate to="/tests" replace />} />
+          <Route path="/test/:moduleKey" element={<Navigate to="/tests" replace />} />
+
           <Route path="/perfil" element={<Perfil />} />
         </Route>
 

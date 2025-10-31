@@ -1,11 +1,11 @@
-// src/pages/Leccion.tsx
-import { Link, useParams } from "react-router-dom";
-import React, { useMemo, useState } from "react"; // 👈 añadí useState
+import { Link, useParams, useNavigate } from "react-router-dom";
+import React, { useMemo, useState, useEffect } from "react";
 import s from "./Inicio.module.css";
 import { getLessonContent } from "../lib/lessonContent";
 import { ProgressProvider, useProgress } from "../contexts/ProgressContext";
 import LessonMedia from "../components/LessonMedia";
-import PracticeModal from "../components/PracticeModal"; // 👈 import modal
+import PracticeModal from "../components/PracticeModal";
+import Navbar from "../components/Navbar"; // ✅ usa tu navbar global
 
 /* ---------- Helpers UI ---------- */
 function Chip({ children }: { children: React.ReactNode }) {
@@ -79,6 +79,26 @@ function getSegments(moduleKey: string): Segment[] {
   return [];
 }
 
+/** Orden secuencial de segmentos (según aparecen en getSegments) */
+function getOrderedKeys(moduleKey: string): string[] {
+  return getSegments(moduleKey).map((s) => s.key.toUpperCase());
+}
+
+/** ✅ Desbloqueo UNO POR UNO:
+ *  el segmento i se desbloquea solo si TODOS los anteriores [0..i-1] están completados */
+function useIsUnlocked(moduleKey: string, segKey: string) {
+  const { isDone } = useProgress();
+  const order = getOrderedKeys(moduleKey);
+  const target = segKey.toUpperCase();
+  const idx = order.indexOf(target);
+  if (idx <= 0) return true; // el primero siempre libre
+  for (let i = 0; i < idx; i++) {
+    if (!isDone(moduleKey.toUpperCase(), order[i])) return false;
+  }
+  return true;
+}
+
+/* ---------- Navegación de segmentos ---------- */
 function SegmentNav({
   moduleKey,
   currentLessonKey,
@@ -108,42 +128,51 @@ function SegmentNav({
       {segments.map((seg) => {
         const active = seg.key.toUpperCase() === currentLessonKey.toUpperCase();
         const completed = isDone(moduleKey, seg.key);
+        const unlocked = useIsUnlocked(moduleKey, seg.key);
+
+        const base = {
+          textDecoration: "none",
+          padding: "8px 12px",
+          borderRadius: 10,
+          border: active ? "1px solid #c7d2fe" : "1px solid transparent",
+          background: active ? "#eef2ff" : "#f8fafc",
+          color: unlocked ? "#0f172a" : "#94a3b8",
+          fontWeight: active ? 700 : 600,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          cursor: unlocked ? ("pointer" as const) : ("not-allowed" as const),
+          opacity: unlocked ? 1 : 0.7,
+        };
+
+        const dot = {
+          width: 8,
+          height: 8,
+          borderRadius: 999,
+          background: completed ? "#10b981" : active ? "#6366f1" : "#94a3b8",
+          boxShadow: completed ? "0 0 0 2px rgba(16,185,129,.2)" : undefined,
+        };
+
+        if (!unlocked) {
+          return (
+            <span key={seg.key} aria-disabled title="🔒 Completa el anterior para desbloquear" style={base}>
+              <span style={dot} />
+              {seg.short} 🔒
+            </span>
+          );
+        }
+
         return (
           <Link
             key={seg.key}
             to={`/modulos/${moduleKey}/leccion/${seg.key}`}
+            style={base}
             aria-current={active ? "page" : undefined}
-            style={{
-              textDecoration: "none",
-              padding: "8px 12px",
-              borderRadius: 10,
-              border: active ? "1px solid #c7d2fe" : "1px solid transparent",
-              background: active ? "#eef2ff" : "#f8fafc",
-              color: "#0f172a",
-              fontWeight: active ? 700 : 600,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
             title={seg.title}
           >
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 999,
-                background: completed
-                  ? "#10b981"
-                  : active
-                  ? "#6366f1"
-                  : "#94a3b8",
-                boxShadow: completed ? "0 0 0 2px rgba(16,185,129,.2)" : undefined,
-              }}
-            />
+            <span style={dot} />
             {seg.short}
-            {completed && (
-              <span style={{ fontSize: 12, color: "#10b981" }}>✓</span>
-            )}
+            {completed && <span style={{ fontSize: 12, color: "#10b981" }}>✓</span>}
           </Link>
         );
       })}
@@ -151,6 +180,7 @@ function SegmentNav({
   );
 }
 
+/* ---------- Sidebar ---------- */
 function SegmentsCard({
   moduleKey,
   currentLessonKey,
@@ -176,14 +206,15 @@ function SegmentsCard({
         {segments.map((seg, idx) => {
           const active = seg.key.toUpperCase() === currentLessonKey.toUpperCase();
           const completed = isDone(moduleKey, seg.key);
+          const unlocked = useIsUnlocked(moduleKey, seg.key);
+
           const bullet = completed ? "✓" : active ? "●" : "•";
-          const bulletColor = completed ? "#10b981" : active ? "#111827" : "#94a3b8";
-          return (
-            <Link
+          const color = completed ? "#10b981" : active ? "#111827" : "#94a3b8";
+
+          const row = (
+            <div
               key={seg.key}
-              to={`/modulos/${moduleKey}/leccion/${seg.key}`}
               style={{
-                textDecoration: "none",
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
@@ -191,8 +222,10 @@ function SegmentsCard({
                 borderRadius: 10,
                 border: active ? "1px solid #e5e7eb" : "1px solid transparent",
                 background: active ? "#f8fafc" : "transparent",
-                color: "#0f172a",
+                color: unlocked ? "#0f172a" : "#94a3b8",
+                cursor: unlocked ? "pointer" : "not-allowed",
               }}
+              title={unlocked ? seg.title : "🔒 Completa el anterior para desbloquear"}
             >
               <span
                 style={{
@@ -202,17 +235,25 @@ function SegmentsCard({
                   placeItems: "center",
                   fontSize: 12,
                   borderRadius: 999,
-                  color: bulletColor,
-                  border: completed ? "1px solid #d1fae5" : "1px solid #e5e7eb",
+                  color,
+                  border: "1px solid #e5e7eb",
                   background: completed ? "#ecfdf5" : "#fff",
                 }}
               >
-                {bullet}
+                {unlocked ? bullet : "🔒"}
               </span>
               <span style={{ fontWeight: active ? 700 : 500 }}>{seg.title}</span>
               <span style={{ marginLeft: "auto", fontSize: 12, color: "#64748b" }}>
                 Paso {idx + 1}
               </span>
+            </div>
+          );
+
+          if (!unlocked) return <span key={seg.key}>{row}</span>;
+
+          return (
+            <Link key={seg.key} to={`/modulos/${moduleKey}/leccion/${seg.key}`} style={{ textDecoration: "none" }}>
+              {row}
             </Link>
           );
         })}
@@ -221,7 +262,6 @@ function SegmentsCard({
   );
 }
 
-/* ---------- Sidebar ---------- */
 function Sidebar({
   moduleKey,
   lessonKey,
@@ -235,6 +275,7 @@ function Sidebar({
 }) {
   const { isDone, toggle } = useProgress();
   const done = isDone(moduleKey, lessonKey);
+  const unlocked = useIsUnlocked(moduleKey, lessonKey);
 
   return (
     <aside
@@ -259,23 +300,27 @@ function Sidebar({
         <div style={{ fontWeight: 700 }}>{lessonTitle}</div>
         <div style={{ marginTop: 8 }}>
           <Chip>{done ? "Completada" : "En progreso"}</Chip>
+          {!unlocked && <span style={{ marginLeft: 8, color: "#64748b" }}>🔒 Bloqueada</span>}
         </div>
-        <button
-          onClick={() => toggle(moduleKey, lessonKey)}
-          style={{
-            marginTop: 12,
-            width: "100%",
-            border: "1px solid #e5e7eb",
-            background: done ? "#10b981" : "#fff",
-            color: done ? "#fff" : "#0f172a",
-            padding: "10px 12px",
-            borderRadius: 10,
-            cursor: "pointer",
-            fontSize: 14,
-          }}
-        >
-          {done ? "✓ Marcar como no completada" : "Marcar como completada"}
-        </button>
+
+        {unlocked && (
+          <button
+            onClick={() => toggle(moduleKey, lessonKey)}
+            style={{
+              marginTop: 12,
+              width: "100%",
+              border: "1px solid #e5e7eb",
+              background: done ? "#10b981" : "#fff",
+              color: done ? "#fff" : "#0f172a",
+              padding: "10px 12px",
+              borderRadius: 10,
+              cursor: "pointer",
+              fontSize: 14,
+            }}
+          >
+            {done ? "✓ Marcar como no completada" : "Marcar como completada"}
+          </button>
+        )}
       </div>
 
       <SegmentsCard moduleKey={moduleKey} currentLessonKey={lessonKey} />
@@ -299,31 +344,37 @@ function Sidebar({
 
 /* ---------- Vista principal ---------- */
 function LessonViewInner() {
-  const { moduleKey = "", lessonKey = "" } = useParams<{
-    moduleKey: string;
-    lessonKey: string;
-  }>();
-  const mk = (moduleKey || "").toUpperCase();
-  const lk = (lessonKey || "").toUpperCase();
+  const { moduleKey = "", lessonKey = "" } = useParams<{ moduleKey: string; lessonKey: string }>();
+  const navigate = useNavigate();
+  const mk = moduleKey.toUpperCase();
+  const lk = lessonKey.toUpperCase();
+  const { isDone } = useProgress();
+
+  // ⛓️ Protección: si intentan abrir un segmento sin tener el anterior completo, redirigimos al primero pendiente
+  useEffect(() => {
+    const order = getOrderedKeys(mk);
+    const idx = order.indexOf(lk);
+    if (idx > 0) {
+      // busca el primer anterior no completado
+      for (let i = 0; i < idx; i++) {
+        if (!isDone(mk, order[i])) {
+          navigate(`/modulos/${mk}/leccion/${order[i]}`, { replace: true });
+          break;
+        }
+      }
+    }
+  }, [mk, lk, isDone, navigate]);
 
   const content = useMemo(() => getLessonContent(mk, lk), [mk, lk]);
-
-  // ▼▼▼ Estado de práctica (para abrir/cerrar la cámara con la letra seleccionada)
-  const [practice, setPractice] = useState<{ open: boolean; label: string | null }>({
-    open: false,
-    label: null,
-  });
+  const [practice, setPractice] = useState<{ open: boolean; label: string | null }>({ open: false, label: null });
   const handlePractice = (label: string) => setPractice({ open: true, label });
   const handleClosePractice = () => setPractice({ open: false, label: null });
-  // ▲▲▲
 
   if (!content) {
     return (
       <div style={{ padding: 24 }}>
         <h2 style={{ marginTop: 0 }}>Contenido no disponible</h2>
-        <p style={{ color: "#475569" }}>
-          Aún no hay material cargado para esta lección.
-        </p>
+        <p style={{ color: "#475569" }}>Aún no hay material cargado para esta lección.</p>
         <Link to={`/modulos/${mk}`} style={{ textDecoration: "none" }}>
           ← Volver
         </Link>
@@ -332,30 +383,10 @@ function LessonViewInner() {
   }
 
   return (
-    <div className={s.wrapper}>
-      <nav className={s.nav} aria-label="Barra de navegación principal">
-        <Link to="/" style={{ textDecoration: "none", color: "inherit" }}>
-          <div className={s.brand}>
-            <div className={s.logo} aria-hidden>
-              👋
-            </div>
-            <div className={s.brandText}>LENSEGUA Kids</div>
-          </div>
-        </Link>
-        <div className={s.actions}>
-          <Link to="/" className={s.link}>
-            Inicio
-          </Link>
-          <Link to="/modulos" className={s.btnSmall}>
-            Módulos
-          </Link>
-        </div>
-      </nav>
+    <div className={`${s.wrapper} ${s.withNavbar}`}>
+      <Navbar /> {/* ✅ Navbar global */}
 
-      <div
-        className={s.container}
-        style={{ alignItems: "start", paddingTop: 16, paddingBottom: 24 }}
-      >
+      <div className={s.container} style={{ alignItems: "start", paddingTop: 16, paddingBottom: 24 }}>
         <div
           style={{
             display: "grid",
@@ -376,42 +407,31 @@ function LessonViewInner() {
                 {content.moduleTitle}
               </Link>
               <span style={{ margin: "0 6px" }}>›</span>
-              <span style={{ color: "#0f172a", fontWeight: 700 }}>
-                {content.lessonTitle}
-              </span>
+              <span style={{ color: "#0f172a", fontWeight: 700 }}>{content.lessonTitle}</span>
             </div>
 
             <SegmentNav moduleKey={mk} currentLessonKey={lk} />
 
-            <h2 style={{ margin: "6px 0 8px 0", color: "#0f172a" }}>
-              {content.lessonTitle}
-            </h2>
+            <h2 style={{ margin: "6px 0 8px 0", color: "#0f172a" }}>{content.lessonTitle}</h2>
 
-            {/* Solo texto/callouts del contenido estático */}
-            <div>
-              {content.blocks.map((b, idx) => {
-                if (b.type === "text")
-                  return <TextBlock key={idx} title={b.title} body={b.body} />;
-                if (b.type === "callout")
-                  return <Callout key={idx} body={b.body} kind={b.kind} />;
-                return null;
-              })}
-            </div>
+            {!useIsUnlocked(mk, lk) && (
+              <Callout
+                kind="warning"
+                body="🔒 Esta lección está bloqueada. Completa primero la anterior para desbloquear."
+              />
+            )}
 
-            {/* Material dinámico desde Firebase Storage */}
-            <LessonMedia
-              moduleKey={mk}
-              lessonKey={lk}
-              title="Material"
-              onPractice={handlePractice} // 👈 abre el modal con la letra
-            />
+            {content.blocks.map((b, i) => {
+              if (b.type === "text") return <TextBlock key={i} title={b.title} body={b.body} />;
+              if (b.type === "callout") return <Callout key={i} body={b.body} kind={b.kind} />;
+              return null;
+            })}
 
-            {/* Modal de práctica */}
-            <PracticeModal
-              label={practice.label ?? "A"}
-              open={practice.open}
-              onClose={handleClosePractice}
-            />
+            {useIsUnlocked(mk, lk) && (
+              <LessonMedia moduleKey={mk} lessonKey={lk} title="Material" onPractice={handlePractice} />
+            )}
+
+            <PracticeModal label={practice.label ?? "A"} open={practice.open} onClose={handleClosePractice} />
           </main>
 
           <Sidebar
