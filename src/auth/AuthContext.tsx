@@ -23,19 +23,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1) Intenta completar un posible redirect (no bloquea el listener)
-    completeRedirectIfAny().catch((e) => {
-      console.warn("Redirect no completado:", e?.message || e);
+    // Completa login por redirect (si lo hubo)
+    completeRedirectIfAny().finally(() => {
+      // Escucha cambios en la autenticación
+      const unsub = onAuthStateChanged(auth, (u) => {
+        setUser(u ?? null);
+        setLoading(false);
+      });
+      return unsub;
     });
-
-    // 2) Siempre monta el listener de auth (clave para no quedar en loading)
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u ?? null);
-      setLoading(false);
-    });
-
-    // Cleanup correcto para evitar fugas en HMR / cambios de ruta
-    return () => unsub();
   }, []);
 
   // ====== Login con Google ======
