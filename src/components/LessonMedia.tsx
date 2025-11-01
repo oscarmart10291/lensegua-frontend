@@ -92,11 +92,12 @@ export default function LessonMedia({
                 display: "grid",
               }}
             >
+              {/* 🔷 Contenedor CUADRADO, sin recorte */}
               <div
                 style={{
                   width: "100%",
-                  aspectRatio: "4/3",
-                  background: "#f1f5f9",
+                  aspectRatio: "1 / 1",            // ← cuadrado
+                  background: "#f1f5f9",            // fondo suave para letterboxing
                   overflow: "hidden",
                   display: "grid",
                   placeItems: "center",
@@ -108,13 +109,21 @@ export default function LessonMedia({
                     controls
                     preload="metadata"
                     playsInline
-                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "contain",          // ← no recorta video
+                    }}
                   />
                 ) : (
                   <img
                     src={it.url}
                     alt={`Seña de la letra ${it.label}`}
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "contain",          // ← no recorta imagen
+                    }}
                     loading="lazy"
                   />
                 )}
@@ -146,7 +155,7 @@ export default function LessonMedia({
                     fontSize: 13,
                     justifySelf: "start",
                   }}
-                  onClick={() => onPractice?.(it.label)}  // ← dispara el modal
+                  onClick={() => onPractice?.(it.label)} // ← dispara el modal
                 >
                   Practicar
                 </button>

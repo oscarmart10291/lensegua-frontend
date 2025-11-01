@@ -192,3 +192,74 @@ export async function getAbecedarioUrls(
 
   return items;
 }
+
+// ========= NUEVO: helpers compatibles para Tests =========
+
+/** Mapea StorageItem[] → AbcMediaItem[] */
+function mapFilesToAbc(files: StorageItem[]): AbcMediaItem[] {
+  const items: AbcMediaItem[] = files.map((f) => {
+    const base = f.name.replace(/\.[^.]+$/, "");
+    const label = base.toUpperCase();
+
+    const kind =
+      f.contentType?.startsWith("video/")
+        ? "video"
+        : f.contentType?.startsWith("image/")
+        ? "image"
+        : /\.(mp4|webm|mov)(\?|$)/i.test(f.url)
+        ? "video"
+        : /\.(png|jpg|jpeg|gif|webp|avif)(\?|$)/i.test(f.url)
+        ? "image"
+        : undefined;
+
+    return { label, url: f.url, kind, name: f.name };
+  });
+
+  items.sort((a, b) => a.label.localeCompare(b.label, "es", { numeric: true }));
+  return items;
+}
+
+/** Recorre recursivamente una carpeta candidata y devuelve items mapeados. */
+async function tryPrefix(prefix: string): Promise<AbcMediaItem[]> {
+  const files = await listFilesUnder(prefix);
+  const filtered = files.filter((f) =>
+    /\.(png|jpg|jpeg|gif|webp|avif|mp4|webm|mov)(\?|$)/i.test(f.url)
+  );
+  return mapFilesToAbc(filtered);
+}
+
+/**
+ * Busca automáticamente las imágenes del abecedario probando varias rutas:
+ *  - modules/ABECEDARIO (tu BASE actual)
+ *  - modules/abecedario
+ *  - tests/abecedario
+ *  - tests/ABECEDARIO
+ *  - modules (descubrimiento final)
+ */
+async function getAbecedarioAuto(): Promise<AbcMediaItem[]> {
+  const candidates = [
+    BASE,
+    "modules/abecedario",
+    "tests/abecedario",
+    "tests/ABECEDARIO",
+    "modules",
+  ];
+
+  for (const p of candidates) {
+    const items = await tryPrefix(p);
+    if (items.length) return items;
+  }
+  return [];
+}
+
+/**
+ * Compat para el modal de Tests:
+ * - Si pasas segmento ('A_I' | 'J_R' | 'S_Z'), usa tu función existente getAbecedarioUrls(segment).
+ * - Si NO pasas segmento, usa la búsqueda automática.
+ */
+export async function getAbecedarioMaybe(
+  segment?: "A_I" | "J_R" | "S_Z"
+): Promise<AbcMediaItem[]> {
+  if (segment) return getAbecedarioUrls(segment);
+  return getAbecedarioAuto();
+}
