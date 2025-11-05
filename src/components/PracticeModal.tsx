@@ -279,9 +279,16 @@ export default function PracticeModal({
     }
     if (!probsArr) return;
 
-    // top-1
+    // top-1 (solo considerar clases válidas según el mapeo)
+    const validIndices = classIndex ? new Set(Object.values(classIndex)) : null;
     let tIdx = 0, tProb = probsArr[0] ?? 0;
-    for (let i = 1; i < probsArr.length; i++) if (probsArr[i] > tProb) { tProb = probsArr[i]; tIdx = i; }
+
+    for (let i = 1; i < probsArr.length; i++) {
+      // Si hay mapeo, solo considerar índices válidos
+      if (validIndices && !validIndices.has(i)) continue;
+      if (probsArr[i] > tProb) { tProb = probsArr[i]; tIdx = i; }
+    }
+
     setTopIdx(tIdx); setTopProb(tProb);
 
     // score:

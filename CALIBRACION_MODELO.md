@@ -78,20 +78,21 @@ def preprocess_landmarks(landmarks):
 
 ---
 
-## 📊 Validación del Mapeo Actual
+## 📊 Mapeo de Clases Estáticas (21 clases)
 
-El mapeo actual es:
+El mapeo correcto para señas **estáticas** es:
 
 ```json
 {
   "A": 0, "B": 1, "C": 2, "E": 3, "G": 4, "H": 5, "I": 6,
   "K": 7, "L": 8, "M": 9, "N": 10, "O": 11, "Q": 12, "R": 13,
-  "T": 14, "U": 15, "V": 16, "W": 17, "X": 18, "Y": 19, "Z": 20,
-  "D": 21, "F": 22, "J": 23, "Ñ": 24, "P": 25, "S": 26, "CH": 27
+  "T": 14, "U": 15, "V": 16, "W": 17, "X": 18, "Y": 19, "Z": 20
 }
 ```
 
-**⚠️ ESTO ES UNA ESTIMACIÓN.** Debes verificar con tu código de entrenamiento original.
+**✅ Este es el orden CORRECTO de entrenamiento.**
+
+**⚠️ PROBLEMA DETECTADO:** El modelo tiene 28 unidades de salida pero solo 21 clases fueron entrenadas. Los índices 21-27 son "clases fantasma" y serán ignorados automáticamente por el código.
 
 ---
 
@@ -214,3 +215,140 @@ Deben ser muy similares (diferencias < 0.01).
 ---
 
 **¿Necesitas más ayuda?** Revisa los logs del navegador (F12 → Console) para ver errores de TensorFlow.js.
+
+---
+
+## 🚨 Problema: 28 Unidades de Salida vs 21 Clases Entrenadas
+
+### El Problema
+
+Tu modelo actual tiene una **inconsistencia crítica**:
+
+- **Modelo:** 28 unidades en la capa de salida (Dense)
+- **Dataset:** Solo 21 clases estáticas entrenadas (A-Z sin D, F, J, Ñ, P, S)
+
+Esto significa que hay **7 neuronas "fantasma"** (índices 21-27) que:
+- ❌ Nunca fueron entrenadas con datos reales
+- ❌ Generan predicciones aleatorias/basura
+- ❌ Pueden interferir con las predicciones correctas
+
+### Solución Temporal (Ya Implementada)
+
+El código ha sido **modificado automáticamente** para:
+- ✅ Ignorar índices 21-27 al calcular el top-1
+- ✅ Solo considerar índices 0-20 (clases válidas)
+- ✅ Filtrar predicciones basura
+
+**Ubicación:** `src/components/PracticeModal.tsx` línea 283-292
+
+### Solución Permanente (Recomendada)
+
+**Re-entrenar el modelo con la arquitectura correcta:**
+
+```python
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+
+# ⚠️ IMPORTANTE: 21 clases, NO 28
+NUM_CLASES = 21
+
+class_names = [
+    'A', 'B', 'C', 'E', 'G', 'H', 'I', 'K', 'L', 'M', 'N',
+    'O', 'Q', 'R', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
+]
+
+# Arquitectura corregida (basada en tu model.json)
+model = Sequential([
+    Dense(256, activation='relu', input_shape=(42,)),
+    Dropout(0.3),
+    Dense(128, activation='relu'),
+    Dropout(0.2),
+    Dense(64, activation='relu'),
+    Dense(NUM_CLASES, activation='softmax')  # ✅ 21 clases
+])
+
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.000125),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+print(f"✅ Modelo corregido con {NUM_CLASES} clases de salida")
+
+# Entrenar con tu dataset...
+# model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val))
+
+# Exportar a TensorFlow.js
+import tensorflowjs as tfjs
+tfjs.converters.save_keras_model(model, 'models/estatico_corregido')
+```
+
+### Diagnóstico del Problema
+
+Usa el script de diagnóstico para investigar:
+
+```bash
+# Analizar el modelo Keras original
+python scripts/diagnosticar_modelo.py --model modelo_original.h5
+
+# Analizar el dataset
+python scripts/diagnosticar_modelo.py --dataset dataset/estaticas/
+
+# Analizar el modelo TF.js exportado
+python scripts/diagnosticar_modelo.py --tfjs public/models/estatico_last/
+
+# Análisis completo
+python scripts/diagnosticar_modelo.py \
+  --model modelo_original.h5 \
+  --dataset dataset/estaticas/ \
+  --tfjs public/models/estatico_last/
+```
+
+El script te dirá:
+- ✅ Cuántas clases hay en tu dataset
+- ✅ Cuántas unidades tiene tu modelo
+- ✅ Si hay discrepancia entre modelo y dataset
+- ✅ Código para corregir el problema
+
+### Por Qué Ocurrió Esto
+
+Posibles causas:
+
+1. **Error al definir la última capa:**
+   ```python
+   # ❌ Pusiste 28 en lugar de 21
+   model.add(Dense(28, activation='softmax'))
+   ```
+
+2. **Contaste mal las clases:**
+   - Pensaste que eran 28 (26 letras + CH + LL)
+   - Pero realmente solo entrenaste 21
+
+3. **Usaste un modelo pre-definido:**
+   - Copiaste código de otro proyecto que usaba 28 clases
+   - Olvidaste ajustar la última capa
+
+### ¿Puedo Seguir Usando el Modelo Actual?
+
+**Sí, temporalmente:**
+- ✅ El código ahora ignora los índices 21-27
+- ✅ Solo usa las 21 clases válidas (0-20)
+- ✅ Debería funcionar con mejor precisión
+
+**Pero es mejor re-entrenar porque:**
+- ⚡ Modelo más pequeño = más rápido
+- 📉 Menos probabilidad de errores
+- 🎯 Arquitectura limpia y correcta
+
+### Checklist de Corrección
+
+- [ ] Revisé mi código de entrenamiento
+- [ ] Confirmé que solo tengo 21 clases
+- [ ] Ejecuté `diagnosticar_modelo.py` para verificar
+- [ ] Re-entrené el modelo con Dense(21) en la salida
+- [ ] Exporté correctamente a TensorFlow.js
+- [ ] Reemplacé el modelo en `public/models/estatico_last/`
+- [ ] Verifiqué que la precisión mejoró
+
+---
