@@ -131,16 +131,14 @@ export function matchSequence(
 
     // Check adicional: si la diferencia entre objetivo e impostores es pequeña,
     // la seña no es lo suficientemente distintiva
+    // TEMPORALMENTE DESACTIVADO PARA DEBUGGING
+    /*
     const avgImpostorDist = impostorDistances.reduce((a, b) => a + b, 0) / impostorDistances.length;
-    const distinctiveness = avgImpostorDist - bestDistance; // Qué tan diferente es el objetivo vs impostores
-
-    // Si la distintividad es menor a 0.10, rechazar (objetivo e impostores muy similares)
-    // Threshold más bajo = más permisivo (acepta más señas)
+    const distinctiveness = avgImpostorDist - bestDistance;
     const distinctivenessThreshold = 0.10;
 
     if (distinctiveness < distinctivenessThreshold) {
       const artificialDistance = rejectThreshold * 2.0;
-
       return {
         score: distanceToScore(artificialDistance, acceptThreshold, rejectThreshold, config.strictnessFactor),
         distance: bestDistance,
@@ -149,6 +147,7 @@ export function matchSequence(
         topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
       };
     }
+    */
   }
 
   // === DECISIÓN FINAL ===
