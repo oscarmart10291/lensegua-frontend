@@ -21,8 +21,8 @@ export type TemplateDict = Record<string, Template[]>;
 export const LENSEGUA_CONFIG: Record<string, SignType> = {
   // Estáticas (la mayoría)
   A: "static", B: "static", C: "static", E: "static", G: "static",
-  H: "static", I: "static", K: "static", L: "static", M: "static",
-  N: "static", O: "static", Q: "static", T: "static",
+  H: "static", I: "static", K: "static", L: "static", LL: "static", M: "static",
+  N: "static", O: "static", Q: "static", R: "static", T: "static",
   U: "static", V: "static", W: "static", X: "static", Y: "static", Z: "static",
 
   // Dinámicas (con movimiento)
@@ -51,10 +51,18 @@ export function parseTemplateJSON(
   try {
     let sequence: Sequence;
 
+    // Detectar si tiene el campo "frames" (formato con metadata)
+    let framesData: any;
+    if (rawData && typeof rawData === "object" && "frames" in rawData) {
+      framesData = rawData.frames;
+    } else {
+      framesData = rawData;
+    }
+
     if (signType === "static") {
       // Formato estático: [[[ {x,y,z}, ... ]]]
       // Navegamos a través de los 3 niveles de arrays
-      const framesLevel = rawData; // Nivel 1
+      const framesLevel = framesData; // Nivel 1
       if (!Array.isArray(framesLevel) || framesLevel.length === 0) {
         throw new Error("Formato estático inválido: no hay frames");
       }
@@ -72,14 +80,12 @@ export function parseTemplateJSON(
       sequence = [parseLandmarks(landmarks)];
 
     } else {
-      // Formato dinámico: { frames: [[ {x,y,z}, ... ], ...] }
-      // o directamente [ [...], [...], ... ]
+      // Formato dinámico: [[ {x,y,z}, ... ], ...]
+      // donde cada elemento del array exterior es un frame
       let frames: any[];
 
-      if (rawData.frames && Array.isArray(rawData.frames)) {
-        frames = rawData.frames;
-      } else if (Array.isArray(rawData)) {
-        frames = rawData;
+      if (Array.isArray(framesData)) {
+        frames = framesData;
       } else {
         throw new Error("Formato dinámico inválido: no se encontró array de frames");
       }
@@ -196,34 +202,83 @@ export async function loadTemplates(
 }
 
 /**
+ * Carga el manifest.json con la lista de archivos disponibles
+ *
+ * @param basePath Ruta base (ej: "/landmarks")
+ * @returns Promise<Record<string, string[]>> Diccionario letra → array de nombres de archivo
+ */
+async function loadManifest(basePath: string): Promise<Record<string, string[]>> {
+  try {
+    const response = await fetch(`${basePath}/manifest.json`);
+    if (!response.ok) {
+      console.warn(`No se encontró manifest.json en ${basePath}, se usará modo fallback`);
+      return {};
+    }
+    return await response.json();
+  } catch (error) {
+    console.warn("Error cargando manifest.json:", error);
+    return {};
+  }
+}
+
+/**
  * Carga plantillas de una sola letra
  *
  * @param basePath Ruta base (ej: "/landmarks")
  * @param letter Letra (ej: "A")
- * @param count Número de archivos (ej: 3)
+ * @param maxCount Número máximo de archivos a cargar (opcional, si no se especifica carga todos)
  * @returns Promise<Template[]>
  */
 export async function loadTemplatesForLetter(
   basePath: string,
   letter: string,
-  count: number = 3
+  maxCount?: number
 ): Promise<Template[]> {
   const templates: Template[] = [];
 
-  for (let i = 1; i <= count; i++) {
-    const url = `${basePath}/${letter}/${i}.json`;
-    try {
-      const response = await fetch(url);
-      if (!response.ok) continue;
+  // Intentar cargar desde manifest
+  const manifest = await loadManifest(basePath);
+  const files = manifest[letter];
 
-      const rawData = await response.json();
-      const template = parseTemplateJSON(rawData, letter, `${letter}_${i}`);
+  if (files && files.length > 0) {
+    // Usar manifest
+    const filesToLoad = maxCount ? files.slice(0, maxCount) : files;
 
-      if (template) {
-        templates.push(template);
+    for (const filename of filesToLoad) {
+      const url = `${basePath}/${letter}/${filename}`;
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+
+        const rawData = await response.json();
+        const templateId = filename.replace('.json', '');
+        const template = parseTemplateJSON(rawData, letter, templateId);
+
+        if (template) {
+          templates.push(template);
+        }
+      } catch (error) {
+        console.warn(`Error cargando ${url}:`, error);
       }
-    } catch (error) {
-      console.warn(`Error cargando ${url}:`, error);
+    }
+  } else {
+    // Fallback: intentar cargar archivos numerados
+    const count = maxCount || 3;
+    for (let i = 1; i <= count; i++) {
+      const url = `${basePath}/${letter}/${i}.json`;
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+
+        const rawData = await response.json();
+        const template = parseTemplateJSON(rawData, letter, `${letter}_${i}`);
+
+        if (template) {
+          templates.push(template);
+        }
+      } catch (error) {
+        // Silenciar errores en modo fallback
+      }
     }
   }
 
