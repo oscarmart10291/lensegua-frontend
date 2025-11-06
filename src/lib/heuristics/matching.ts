@@ -118,9 +118,13 @@ export function matchSequence(
     console.log(`🕵️ Impostor check: mejor impostor = ${bestImpostorDist.toFixed(4)} (letra ${bestImpostorLetter}) vs objetivo = ${bestDistance.toFixed(4)}`);
     console.log(`   Todas las distancias de impostores:`, impostorTemplates.map((t, i) => `${t.letter}=${impostorDistances[i].toFixed(4)}`).join(", "));
 
-    // Si algún impostor está más cerca que el objetivo, rechazar
-    if (bestImpostorDist < bestDistance * 0.95) { // Margen del 5%
-      console.log(`❌ Impostor '${bestImpostorLetter}' más cercano que objetivo: ${bestImpostorDist.toFixed(4)} < ${(bestDistance * 0.95).toFixed(4)}`);
+    // Si algún impostor está SIGNIFICATIVAMENTE más cerca que el objetivo, rechazar
+    // Usamos diferencia absoluta en lugar de ratio para ser más permisivos
+    const impostorMargin = 0.4; // El impostor debe estar al menos 0.4 unidades más cerca
+    const threshold = bestDistance - impostorMargin;
+
+    if (bestImpostorDist < threshold) {
+      console.log(`❌ Impostor '${bestImpostorLetter}' SIGNIFICATIVAMENTE más cercano: ${bestImpostorDist.toFixed(4)} < ${threshold.toFixed(4)} (margen: ${impostorMargin})`);
       return {
         score: distanceToScore(bestDistance * 1.5, acceptThreshold, rejectThreshold, config.strictnessFactor),
         distance: bestDistance,
@@ -128,6 +132,8 @@ export function matchSequence(
         decision: "rejected",
         topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
       };
+    } else {
+      console.log(`✅ Impostor check pasado: diferencia ${(bestDistance - bestImpostorDist).toFixed(4)} < ${impostorMargin} requerido`);
     }
   }
 
