@@ -25,7 +25,7 @@ type Props = {
 
 type MPPoint = { x: number; y: number; z?: number };
 
-type HeuristicState = "idle" | "countdown" | "analyzing" | "result";
+type HeuristicState = "idle" | "countdown" | "capturing" | "analyzing" | "result";
 
 type HeuristicResult = {
   score: number;
@@ -138,9 +138,26 @@ export default function PracticeModal({
   /* ---------- funciones modo heurístico ---------- */
   const startHeuristicCountdown = () => {
     setHeuristicState("countdown");
-    heuristicStateRef.current = "countdown"; // Actualizar ref también
+    heuristicStateRef.current = "countdown";
     setCountdown(3);
     capturedFramesRef.current = [];
+
+    let count = 3;
+    countdownTimerRef.current = window.setInterval(() => {
+      count--;
+      setCountdown(count);
+      if (count === 0) {
+        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+        // Iniciar fase de captura
+        startCapture();
+      }
+    }, 1000);
+  };
+
+  const startCapture = () => {
+    setHeuristicState("capturing");
+    heuristicStateRef.current = "capturing";
+    setCountdown(3); // 3 segundos para realizar la seña
 
     let count = 3;
     countdownTimerRef.current = window.setInterval(() => {
@@ -354,7 +371,7 @@ export default function PracticeModal({
         ctx.restore();
 
         // === CAPTURA PARA MODO HEURÍSTICO ===
-        if (modeRef.current === "heuristic" && heuristicStateRef.current === "countdown" && hand) {
+        if (modeRef.current === "heuristic" && heuristicStateRef.current === "capturing" && hand) {
           const frame = parseLandmarks(hand.map(p => ({ x: p.x, y: p.y, z: p.z ?? 0 })));
           capturedFramesRef.current.push(frame);
         }
@@ -620,12 +637,24 @@ export default function PracticeModal({
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 380 }}>
                     <div style={{ fontSize: 96, fontWeight: 800, color: "#0f172a", marginBottom: 24 }}>{countdown}</div>
                     <div style={{ fontSize: 18, fontWeight: 600, color: "#334155", marginBottom: 12 }}>
-                      Realiza la seña ahora
+                      Prepárate...
                     </div>
                     <div style={{ fontSize: 14, color: "#64748b", textAlign: "center", maxWidth: 300 }}>
-                      Coloca tu mano como la seña de <strong>{label}</strong> y manténla estable durante el conteo.
+                      La captura iniciará cuando llegue a cero.
                     </div>
-                    <div style={{ marginTop: 24, padding: "8px 12px", background: "#dbeafe", borderRadius: 8, fontSize: 12, color: "#1e40af" }}>
+                  </div>
+                )}
+
+                {heuristicState === "capturing" && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 380 }}>
+                    <div style={{ fontSize: 96, fontWeight: 800, color: "#16a34a", marginBottom: 24 }}>{countdown}</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: "#16a34a", marginBottom: 12 }}>
+                      ¡Ahora!
+                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: "#334155", marginBottom: 12 }}>
+                      Realiza la seña de <strong>{label}</strong>
+                    </div>
+                    <div style={{ marginTop: 24, padding: "8px 12px", background: "#dcfce7", borderRadius: 8, fontSize: 12, color: "#166534" }}>
                       Capturando: {capturedFramesRef.current.length} frames
                     </div>
                   </div>
