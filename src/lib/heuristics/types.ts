@@ -71,11 +71,11 @@ export const DEFAULT_CONFIG: MatchingConfig = {
   smoothingWindow: 3,
 
   staticWindowSize: 8,
-  staticAcceptThreshold: 5.0,
+  staticAcceptThreshold: 6.0,   // Subido de 5.0 a 6.0 para ser más permisivo
   staticRejectThreshold: 20.0,
 
   dynamicResampleLength: 40,
-  dynamicAcceptThreshold: 10.0,
+  dynamicAcceptThreshold: 12.0,  // Subido de 10.0 a 12.0 para dinámicas
   dynamicRejectThreshold: 40.0,
 
   top2MarginThreshold: 0.01,  // Cambiado de 0.15 a 0.01 (1%) - solo marca ambiguo si son casi idénticas
