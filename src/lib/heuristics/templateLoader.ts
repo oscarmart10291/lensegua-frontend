@@ -158,7 +158,9 @@ export function parseTemplateJSON(
     };
 
   } catch (error) {
-    console.warn(`⚠️ Archivo corrupto omitido: ${templateId} (letra ${letter}) -`, error instanceof Error ? error.message : error);
+    // Los archivos corruptos se omiten silenciosamente
+    // Puedes descomentar la línea siguiente para debugging:
+    // console.warn(`⚠️ Archivo corrupto omitido: ${templateId} (letra ${letter}) -`, error instanceof Error ? error.message : error);
     return null;
   }
 }
