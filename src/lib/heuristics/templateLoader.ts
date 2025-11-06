@@ -68,11 +68,23 @@ export function parseTemplateJSON(
       }
 
       const frameLevel = framesLevel[0]; // Nivel 2
+
+      // Detectar archivos corruptos con [[null]]
+      if (frameLevel === null || frameLevel === undefined) {
+        throw new Error("Archivo corrupto: frameLevel es null/undefined");
+      }
+
       if (!Array.isArray(frameLevel) || frameLevel.length === 0) {
         throw new Error("Formato estático inválido: no hay frame interno");
       }
 
       const landmarks = frameLevel[0]; // Nivel 3 (los 21 puntos)
+
+      // Detectar archivos corruptos con [[null]]
+      if (landmarks === null || landmarks === undefined) {
+        throw new Error("Archivo corrupto: landmarks es null/undefined");
+      }
+
       if (!Array.isArray(landmarks) || landmarks.length !== 21) {
         throw new Error(`Formato estático inválido: esperaba 21 puntos, encontró ${landmarks?.length}`);
       }
@@ -98,16 +110,26 @@ export function parseTemplateJSON(
       for (let i = 0; i < frames.length; i++) {
         const frameData = frames[i];
 
+        // Detectar archivos corruptos
+        if (frameData === null || frameData === undefined) {
+          throw new Error(`Frame ${i} es null/undefined (archivo corrupto)`);
+        }
+
         // frames[i] puede ser directamente el array de 21 puntos,
         // o puede ser frames[i][0]
         let landmarks: any[];
         if (Array.isArray(frameData) && frameData.length > 0) {
-          if (typeof frameData[0] === "object" && "x" in frameData[0]) {
+          if (typeof frameData[0] === "object" && frameData[0] !== null && "x" in frameData[0]) {
             // Es directamente el array de puntos
             landmarks = frameData;
           } else if (Array.isArray(frameData[0])) {
             // Es frames[i][0]
             landmarks = frameData[0];
+
+            // Detectar null dentro del array
+            if (landmarks === null || landmarks === undefined) {
+              throw new Error(`Frame ${i}[0] es null/undefined (archivo corrupto)`);
+            }
           } else {
             throw new Error(`Frame ${i} tiene formato inválido`);
           }

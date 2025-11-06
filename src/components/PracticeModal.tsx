@@ -255,7 +255,7 @@ export default function PracticeModal({
 
   /* ---------- cargar modelo ---------- */
   useEffect(() => {
-    if (!open) return;
+    if (!open || mode !== "tensorflow") return;
     let active = true;
     setScore(0); setTopIdx(null); setTopProb(0);
     seqBufferRef.current = [];
@@ -279,11 +279,11 @@ export default function PracticeModal({
     })();
 
     return () => { active = false; modelRef.current = null; };
-  }, [open, modelUrl]);
+  }, [open, mode, modelUrl]);
 
   /* ---------- cargar mapeo (archivo + localStorage) ---------- */
   useEffect(() => {
-    if (!open) return;
+    if (!open || mode !== "tensorflow") return;
     let cancelled = false;
 
     const fromLS = loadLocalMapping();
@@ -305,7 +305,7 @@ export default function PracticeModal({
     })();
 
     return () => { cancelled = true; };
-  }, [open, modelUrl]);
+  }, [open, mode, modelUrl]);
 
   /* ---------- mediapipe ---------- */
   useEffect(() => {
