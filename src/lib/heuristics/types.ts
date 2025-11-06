@@ -78,7 +78,7 @@ export const DEFAULT_CONFIG: MatchingConfig = {
   dynamicAcceptThreshold: 10.0,
   dynamicRejectThreshold: 40.0,
 
-  top2MarginThreshold: 0.15,
+  top2MarginThreshold: 0.01,  // Cambiado de 0.15 a 0.01 (1%) - solo marca ambiguo si son casi idénticas
   enableImpostorCheck: true,
   strictnessFactor: 1.0,
 
