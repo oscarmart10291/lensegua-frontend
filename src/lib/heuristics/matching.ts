@@ -141,9 +141,26 @@ export function matchSequence(
         decision: "rejected",
         topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
       };
-    } else {
-      console.log(`✅ Impostor check pasado: diferencia ${(bestDistance - bestImpostorDist).toFixed(4)} < ${impostorMargin} requerido`);
     }
+
+    // Check adicional: si TANTO el objetivo COMO los impostores tienen distancias muy bajas,
+    // la seña es demasiado genérica y debería rechazarse
+    const avgImpostorDist = impostorDistances.reduce((a, b) => a + b, 0) / impostorDistances.length;
+    if (bestDistance < 0.5 && avgImpostorDist < 0.8) {
+      console.log(`❌ Seña genérica detectada: objetivo=${bestDistance.toFixed(4)}, avg_impostores=${avgImpostorDist.toFixed(4)} (ambos muy bajos)`);
+
+      const artificialDistance = rejectThreshold * 2.0;
+
+      return {
+        score: distanceToScore(artificialDistance, acceptThreshold, rejectThreshold, config.strictnessFactor),
+        distance: bestDistance,
+        matchedTemplateId: bestTemplate.id,
+        decision: "rejected",
+        topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
+      };
+    }
+
+    console.log(`✅ Impostor check pasado: diferencia ${(bestDistance - bestImpostorDist).toFixed(4)} < ${impostorMargin} requerido`);
   }
 
   // === DECISIÓN FINAL ===
