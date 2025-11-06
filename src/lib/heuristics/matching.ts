@@ -111,12 +111,16 @@ export function matchSequence(
       }
     });
 
-    const bestImpostorDist = Math.min(...impostorDistances);
-    console.log(`🕵️ Impostor check: mejor impostor = ${bestImpostorDist.toFixed(4)} vs objetivo = ${bestDistance.toFixed(4)}`);
+    const bestImpostorIdx = impostorDistances.indexOf(Math.min(...impostorDistances));
+    const bestImpostorDist = impostorDistances[bestImpostorIdx];
+    const bestImpostorLetter = impostorTemplates[bestImpostorIdx].letter;
+
+    console.log(`🕵️ Impostor check: mejor impostor = ${bestImpostorDist.toFixed(4)} (letra ${bestImpostorLetter}) vs objetivo = ${bestDistance.toFixed(4)}`);
+    console.log(`   Todas las distancias de impostores:`, impostorTemplates.map((t, i) => `${t.letter}=${impostorDistances[i].toFixed(4)}`).join(", "));
 
     // Si algún impostor está más cerca que el objetivo, rechazar
     if (bestImpostorDist < bestDistance * 0.95) { // Margen del 5%
-      console.log(`❌ Impostor más cercano que objetivo: ${bestImpostorDist.toFixed(4)} < ${(bestDistance * 0.95).toFixed(4)}`);
+      console.log(`❌ Impostor '${bestImpostorLetter}' más cercano que objetivo: ${bestImpostorDist.toFixed(4)} < ${(bestDistance * 0.95).toFixed(4)}`);
       return {
         score: distanceToScore(bestDistance * 1.5, acceptThreshold, rejectThreshold, config.strictnessFactor),
         distance: bestDistance,
