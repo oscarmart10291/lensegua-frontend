@@ -71,15 +71,15 @@ export const DEFAULT_CONFIG: MatchingConfig = {
   smoothingWindow: 3,
 
   staticWindowSize: 8,
-  staticAcceptThreshold: 8.0,   // MUY permisivo para debugging
-  staticRejectThreshold: 25.0,  // Más alto
+  staticAcceptThreshold: 7.0,   // Balanceado: intermedio entre estricto(5) y permisivo(8)
+  staticRejectThreshold: 22.0,  // Intermedio
 
   dynamicResampleLength: 40,
-  dynamicAcceptThreshold: 15.0,  // MUY permisivo para debugging
-  dynamicRejectThreshold: 50.0,  // Más alto
+  dynamicAcceptThreshold: 13.0,  // Balanceado: intermedio entre 10 y 15
+  dynamicRejectThreshold: 45.0,  // Intermedio
 
-  top2MarginThreshold: 0.001,  // Casi desactivado
-  enableImpostorCheck: false,   // DESACTIVADO temporalmente para debugging
+  top2MarginThreshold: 0.005,  // Muy permisivo pero activo
+  enableImpostorCheck: true,   // REACTIVADO con margin más permisivo
   strictnessFactor: 1.0,
 
   minFramesRequired: 20,

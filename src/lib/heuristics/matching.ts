@@ -113,7 +113,7 @@ export function matchSequence(
 
     // Si algún impostor está SIGNIFICATIVAMENTE más cerca que el objetivo, rechazar
     // Usamos diferencia absoluta en lugar de ratio para ser más permisivos
-    const impostorMargin = 0.3; // El impostor debe estar al menos 0.3 unidades más cerca
+    const impostorMargin = 0.25; // Balanceado: más permisivo que 0.4 original
     const threshold = bestDistance - impostorMargin;
 
     if (bestImpostorDist < threshold) {
@@ -131,11 +131,9 @@ export function matchSequence(
 
     // Check adicional: si la diferencia entre objetivo e impostores es pequeña,
     // la seña no es lo suficientemente distintiva
-    // TEMPORALMENTE DESACTIVADO PARA DEBUGGING
-    /*
     const avgImpostorDist = impostorDistances.reduce((a, b) => a + b, 0) / impostorDistances.length;
     const distinctiveness = avgImpostorDist - bestDistance;
-    const distinctivenessThreshold = 0.10;
+    const distinctivenessThreshold = 0.08; // Balanceado: más permisivo que 0.10
 
     if (distinctiveness < distinctivenessThreshold) {
       const artificialDistance = rejectThreshold * 2.0;
@@ -147,7 +145,6 @@ export function matchSequence(
         topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
       };
     }
-    */
   }
 
   // === DECISIÓN FINAL ===
