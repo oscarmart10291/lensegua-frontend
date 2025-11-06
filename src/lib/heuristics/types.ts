@@ -75,8 +75,8 @@ export const DEFAULT_CONFIG: MatchingConfig = {
   staticRejectThreshold: 22.0,  // Intermedio
 
   dynamicResampleLength: 40,
-  dynamicAcceptThreshold: 13.0,  // Balanceado: intermedio entre 10 y 15
-  dynamicRejectThreshold: 45.0,  // Intermedio
+  dynamicAcceptThreshold: 0.5,  // Ajustado al rango real de DTW (distancias ~0.1-1.0)
+  dynamicRejectThreshold: 1.5,  // Rechaza distancias > 1.5
 
   top2MarginThreshold: 0.005,  // Muy permisivo pero activo
   enableImpostorCheck: true,   // REACTIVADO con margin más permisivo
