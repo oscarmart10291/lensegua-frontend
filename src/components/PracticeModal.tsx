@@ -156,7 +156,12 @@ export default function PracticeModal({
 
     const captured = capturedFramesRef.current;
 
+    console.log("🔍 [DEBUG] Análisis iniciado");
+    console.log(`📊 Frames capturados: ${captured.length}`);
+    console.log(`📝 Plantillas cargadas para letra ${label}: ${templatesRef.current.length}`);
+
     if (captured.length < DEFAULT_CONFIG.minFramesRequired) {
+      console.warn(`⚠️ Insuficientes frames: ${captured.length} < ${DEFAULT_CONFIG.minFramesRequired} requeridos`);
       setHeuristicResult({
         score: 0,
         decision: "rejected",
@@ -169,7 +174,7 @@ export default function PracticeModal({
     // Obtener plantillas de la letra objetivo
     const targetTemplates = templatesRef.current;
     if (targetTemplates.length === 0) {
-      console.error("No hay plantillas cargadas para la letra", label);
+      console.error(`❌ No hay plantillas cargadas para la letra ${label}`);
       setHeuristicResult({
         score: 0,
         decision: "rejected",
@@ -181,9 +186,15 @@ export default function PracticeModal({
 
     // Seleccionar impostores
     const impostors = selectImpostorTemplates(templateDictRef.current, label, 5);
+    console.log(`🕵️ Impostores cargados: ${impostors.length} plantillas`);
 
     // Ejecutar matching
     const result = matchSequence(captured, targetTemplates, DEFAULT_CONFIG, impostors);
+
+    console.log("✅ Resultado del matching:");
+    console.log(`   Score: ${result.score.toFixed(2)}%`);
+    console.log(`   Decision: ${result.decision}`);
+    console.log(`   Distance: ${result.distance.toFixed(4)}`);
 
     setHeuristicResult({
       score: Math.round(result.score),
@@ -215,12 +226,15 @@ export default function PracticeModal({
 
     (async () => {
       try {
+        console.log(`📥 Cargando plantillas para letra ${label}...`);
+
         // Cargar plantillas de la letra objetivo
         const templates = await loadTemplatesForLetter("/landmarks", label, 3);
         if (cancelled) return;
 
+        console.log(`✅ Plantillas cargadas para ${label}: ${templates.length}`);
         if (templates.length === 0) {
-          console.warn(`No se encontraron plantillas para la letra ${label}`);
+          console.warn(`⚠️ No se encontraron plantillas para la letra ${label}`);
         }
 
         templatesRef.current = templates;
@@ -230,6 +244,7 @@ export default function PracticeModal({
         const allLetters = ["A", "B", "C", "E", "G", "H", "I", "K", "L", "M", "N", "O", "Q", "RR", "T", "U", "V", "W", "X", "Y", "Z"];
         const otherLetters = allLetters.filter(l => l !== label).slice(0, 5);
 
+        console.log(`📥 Cargando impostores: ${otherLetters.join(", ")}`);
         for (const letter of otherLetters) {
           const otherTemplates = await loadTemplatesForLetter("/landmarks", letter, 1);
           if (cancelled) return;
@@ -237,13 +252,15 @@ export default function PracticeModal({
             templateDictRef.current[letter] = otherTemplates;
           }
         }
+        console.log(`✅ Impostores cargados: ${Object.keys(templateDictRef.current).length} letras`);
 
         // Iniciar countdown automáticamente
         if (!cancelled) {
+          console.log("⏱️ Iniciando countdown...");
           startHeuristicCountdown();
         }
       } catch (error) {
-        console.error("Error cargando plantillas:", error);
+        console.error("❌ Error cargando plantillas:", error);
       }
     })();
 
