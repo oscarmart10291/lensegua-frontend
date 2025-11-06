@@ -146,10 +146,33 @@ top2MarginThreshold: 0.01       // en types.ts
 
 // Captura
 minFramesRequired: 20
-countdownSeconds: 3
+countdownSeconds: 3       // Preparación antes de capturar
+captureSeconds: 3         // Tiempo capturando (hardcoded en startCapture)
 smoothingWindow: 3
 staticWindowSize: 8
 ```
+
+---
+
+## ⏱️ Flujo de Captura (Actualizado)
+
+El sistema ahora tiene **2 fases** para dar tiempo suficiente:
+
+### Fase 1: Countdown (3 segundos)
+- Muestra: **"3...2...1 Prepárate..."**
+- Color: Negro
+- **NO captura frames** - solo preparación
+- Usuario se posiciona para hacer la seña
+
+### Fase 2: Capturing (3 segundos)
+- Muestra: **"3...2...1 ¡Ahora! Realiza la seña"**
+- Color: Verde
+- **SÍ captura frames** - grabando
+- Usuario realiza la seña (estática o dinámica)
+
+### Total: 6 segundos
+- Beneficia señas dinámicas (D, F, J, P, RR, S) que requieren movimiento
+- También mejora señas estáticas al dar tiempo de preparación
 
 ---
 
