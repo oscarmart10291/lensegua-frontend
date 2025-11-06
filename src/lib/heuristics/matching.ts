@@ -47,14 +47,10 @@ export function matchSequence(
     }
   });
 
-  console.log(`🔢 Distancias calculadas (${signType}):`, distances.map(d => d.toFixed(4)).join(", "));
-
   // Encontrar la mejor coincidencia
   const bestIdx = findBestMatchIndex(distances);
   const bestDistance = distances[bestIdx];
   const bestTemplate = templatesForLetter[bestIdx];
-
-  console.log(`🎯 Mejor coincidencia: ${bestTemplate.id} con distancia ${bestDistance.toFixed(4)}`);
 
   // Seleccionar umbrales según tipo
   const acceptThreshold = signType === "static"
@@ -68,8 +64,6 @@ export function matchSequence(
 
   // 1. Rechazo estricto: si la mejor distancia supera el umbral de rechazo
   if (bestDistance >= rejectThreshold) {
-    console.log(`❌ Distancia supera rejectThreshold: ${bestDistance.toFixed(4)} >= ${rejectThreshold.toFixed(2)}`);
-
     return {
       score: distanceToScore(bestDistance, acceptThreshold, rejectThreshold, config.strictnessFactor),
       distance: bestDistance,
@@ -81,11 +75,9 @@ export function matchSequence(
 
   // 2. Top-2 margin: si hay poca diferencia entre las dos mejores, hay ambigüedad
   const margin = calculateTop2Margin(distances);
-  console.log(`📏 Top-2 margin: ${(margin * 100).toFixed(2)}% (threshold: ${(config.top2MarginThreshold * 100).toFixed(0)}%)`);
 
   if (margin < config.top2MarginThreshold) {
     // Ambigüedad detectada - aplicar penalización fuerte
-    console.log(`⚠️ Ambigüedad detectada: margin ${(margin * 100).toFixed(2)}% < ${(config.top2MarginThreshold * 100).toFixed(0)}%`);
 
     // Usar distancia artificial alta para garantizar score bajo (26-50%)
     const artificialDistance = acceptThreshold + (rejectThreshold - acceptThreshold) * 0.8; // ~80% del rango
@@ -118,10 +110,6 @@ export function matchSequence(
 
     const bestImpostorIdx = impostorDistances.indexOf(Math.min(...impostorDistances));
     const bestImpostorDist = impostorDistances[bestImpostorIdx];
-    const bestImpostorLetter = impostorTemplates[bestImpostorIdx].letter;
-
-    console.log(`🕵️ Impostor check: mejor impostor = ${bestImpostorDist.toFixed(4)} (letra ${bestImpostorLetter}) vs objetivo = ${bestDistance.toFixed(4)}`);
-    console.log(`   Todas las distancias de impostores:`, impostorTemplates.map((t, i) => `${t.letter}=${impostorDistances[i].toFixed(4)}`).join(", "));
 
     // Si algún impostor está SIGNIFICATIVAMENTE más cerca que el objetivo, rechazar
     // Usamos diferencia absoluta en lugar de ratio para ser más permisivos
@@ -129,8 +117,6 @@ export function matchSequence(
     const threshold = bestDistance - impostorMargin;
 
     if (bestImpostorDist < threshold) {
-      console.log(`❌ Impostor '${bestImpostorLetter}' SIGNIFICATIVAMENTE más cercano: ${bestImpostorDist.toFixed(4)} < ${threshold.toFixed(4)} (margen: ${impostorMargin})`);
-
       // Usar distancia artificial muy alta para garantizar score 0-25%
       const artificialDistance = rejectThreshold * 2.0;
 
@@ -148,15 +134,11 @@ export function matchSequence(
     const avgImpostorDist = impostorDistances.reduce((a, b) => a + b, 0) / impostorDistances.length;
     const distinctiveness = avgImpostorDist - bestDistance; // Qué tan diferente es el objetivo vs impostores
 
-    console.log(`🔍 Distintividad: ${distinctiveness.toFixed(4)} (objetivo=${bestDistance.toFixed(4)}, avg_impostores=${avgImpostorDist.toFixed(4)})`);
-
     // Si la distintividad es menor a 0.15, rechazar (objetivo e impostores muy similares)
     // Threshold más bajo = más permisivo (acepta más señas)
     const distinctivenessThreshold = 0.15;
 
     if (distinctiveness < distinctivenessThreshold) {
-      console.log(`❌ Seña no distintiva: diferencia ${distinctiveness.toFixed(4)} < ${distinctivenessThreshold} requerido`);
-
       const artificialDistance = rejectThreshold * 2.0;
 
       return {
@@ -167,19 +149,13 @@ export function matchSequence(
         topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
       };
     }
-
-    console.log(`✅ Impostor check pasado: diferencia ${(bestDistance - bestImpostorDist).toFixed(4)} < ${impostorMargin} requerido`);
   }
 
   // === DECISIÓN FINAL ===
-  console.log(`🎚️ Thresholds: accept=${acceptThreshold.toFixed(2)}, reject=${rejectThreshold.toFixed(2)}`);
-
   const decision: "accepted" | "rejected" | "ambiguous" =
     bestDistance <= acceptThreshold ? "accepted" :
     bestDistance >= rejectThreshold ? "rejected" :
     "ambiguous";
-
-  console.log(`✅ Decisión final: ${decision} (distancia ${bestDistance.toFixed(4)} vs thresholds)`);
 
   const score = distanceToScore(
     bestDistance,
