@@ -74,7 +74,7 @@ export const DEFAULT_CONFIG: MatchingConfig = {
   staticAcceptThreshold: 7.0,   // Balanceado: intermedio entre estricto(5) y permisivo(8)
   staticRejectThreshold: 22.0,  // Intermedio
 
-  dynamicResampleLength: 40,
+  dynamicResampleLength: 60,    // Aumentado para capturar más detalles temporales
   dynamicAcceptThreshold: 0.3,  // Más estricto - solo acepta gestos muy precisos
   dynamicRejectThreshold: 1.0,  // Rechaza distancias > 1.0
 

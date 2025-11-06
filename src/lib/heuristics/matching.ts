@@ -137,11 +137,11 @@ export function matchSequence(
     console.log(`   Distancia objetivo: ${bestDistance.toFixed(4)}`);
 
     // Si algún impostor está SIGNIFICATIVAMENTE más cerca que el objetivo, rechazar
-    // Usamos diferencia absoluta en lugar de ratio para ser más permisivos
-    const impostorMargin = 0.25; // Balanceado: más permisivo que 0.4 original
+    // Usamos márgenes diferentes según tipo de seña (dinámicas usan distancias DTW más pequeñas)
+    const impostorMargin = signType === "dynamic" ? 0.03 : 0.25;
     const threshold = bestDistance - impostorMargin;
 
-    console.log(`   Umbral impostor (objetivo - 0.25): ${threshold.toFixed(4)}`);
+    console.log(`   Umbral impostor (objetivo - ${impostorMargin}): ${threshold.toFixed(4)}`);
 
     if (bestImpostorDist < threshold) {
       console.log(`   ❌ RECHAZADO: impostor ${bestImpostorDist.toFixed(4)} < ${threshold.toFixed(4)}`);
