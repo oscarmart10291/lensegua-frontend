@@ -158,7 +158,7 @@ export function parseTemplateJSON(
     };
 
   } catch (error) {
-    console.error(`Error parseando plantilla ${templateId} para letra ${letter}:`, error);
+    console.warn(`⚠️ Archivo corrupto omitido: ${templateId} (letra ${letter}) -`, error instanceof Error ? error.message : error);
     return null;
   }
 }
