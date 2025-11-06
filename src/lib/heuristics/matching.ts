@@ -150,9 +150,12 @@ export function matchSequence(
 
     console.log(`🔍 Distintividad: ${distinctiveness.toFixed(4)} (objetivo=${bestDistance.toFixed(4)}, avg_impostores=${avgImpostorDist.toFixed(4)})`);
 
-    // Si la distintividad es menor a 0.2, rechazar (objetivo e impostores muy similares)
-    if (distinctiveness < 0.2) {
-      console.log(`❌ Seña no distintiva: diferencia ${distinctiveness.toFixed(4)} < 0.2 requerido`);
+    // Si la distintividad es menor a 0.15, rechazar (objetivo e impostores muy similares)
+    // Threshold más bajo = más permisivo (acepta más señas)
+    const distinctivenessThreshold = 0.15;
+
+    if (distinctiveness < distinctivenessThreshold) {
+      console.log(`❌ Seña no distintiva: diferencia ${distinctiveness.toFixed(4)} < ${distinctivenessThreshold} requerido`);
 
       const artificialDistance = rejectThreshold * 2.0;
 
