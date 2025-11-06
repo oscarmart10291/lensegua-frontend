@@ -143,11 +143,16 @@ export function matchSequence(
       };
     }
 
-    // Check adicional: si TANTO el objetivo COMO los impostores tienen distancias muy bajas,
-    // la seña es demasiado genérica y debería rechazarse
+    // Check adicional: si la diferencia entre objetivo e impostores es pequeña,
+    // la seña no es lo suficientemente distintiva
     const avgImpostorDist = impostorDistances.reduce((a, b) => a + b, 0) / impostorDistances.length;
-    if (bestDistance < 0.5 && avgImpostorDist < 0.8) {
-      console.log(`❌ Seña genérica detectada: objetivo=${bestDistance.toFixed(4)}, avg_impostores=${avgImpostorDist.toFixed(4)} (ambos muy bajos)`);
+    const distinctiveness = avgImpostorDist - bestDistance; // Qué tan diferente es el objetivo vs impostores
+
+    console.log(`🔍 Distintividad: ${distinctiveness.toFixed(4)} (objetivo=${bestDistance.toFixed(4)}, avg_impostores=${avgImpostorDist.toFixed(4)})`);
+
+    // Si la distintividad es menor a 0.2, rechazar (objetivo e impostores muy similares)
+    if (distinctiveness < 0.2) {
+      console.log(`❌ Seña no distintiva: diferencia ${distinctiveness.toFixed(4)} < 0.2 requerido`);
 
       const artificialDistance = rejectThreshold * 2.0;
 
