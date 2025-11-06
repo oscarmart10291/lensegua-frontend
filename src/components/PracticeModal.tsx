@@ -94,6 +94,10 @@ export default function PracticeModal({
   const templateDictRef = useRef<TemplateDict>({});
   const countdownTimerRef = useRef<number | null>(null);
 
+  // Refs para acceder al estado actual desde el callback de MediaPipe
+  const heuristicStateRef = useRef<HeuristicState>("idle");
+  const modeRef = useRef<"tensorflow" | "heuristic">(mode);
+
   /* ---------- helpers mapeo ---------- */
   const loadLocalMapping = () => {
     try {
@@ -134,6 +138,7 @@ export default function PracticeModal({
   /* ---------- funciones modo heurístico ---------- */
   const startHeuristicCountdown = () => {
     setHeuristicState("countdown");
+    heuristicStateRef.current = "countdown"; // Actualizar ref también
     setCountdown(3);
     capturedFramesRef.current = [];
 
@@ -150,6 +155,7 @@ export default function PracticeModal({
 
   const analyzeHeuristicCapture = async () => {
     setHeuristicState("analyzing");
+    heuristicStateRef.current = "analyzing"; // Actualizar ref también
 
     // Esperar un poco para mostrar el estado "Analizando..."
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -202,6 +208,7 @@ export default function PracticeModal({
       distance: result.distance,
     });
     setHeuristicState("result");
+    heuristicStateRef.current = "result"; // Actualizar ref también
   };
 
   const retryHeuristic = () => {
@@ -213,10 +220,16 @@ export default function PracticeModal({
   const closeHeuristic = () => {
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
     setHeuristicState("idle");
+    heuristicStateRef.current = "idle"; // Actualizar ref también
     setHeuristicResult(null);
     capturedFramesRef.current = [];
     onClose();
   };
+
+  /* ---------- sincronizar refs con estado ---------- */
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   /* ---------- cargar plantillas heurísticas ---------- */
   useEffect(() => {
@@ -363,14 +376,19 @@ export default function PracticeModal({
         ctx.restore();
 
         // === CAPTURA PARA MODO HEURÍSTICO ===
-        if (mode === "heuristic" && heuristicState === "countdown" && hand) {
+        if (modeRef.current === "heuristic" && heuristicStateRef.current === "countdown" && hand) {
           const frame = parseLandmarks(hand.map(p => ({ x: p.x, y: p.y, z: p.z ?? 0 })));
           capturedFramesRef.current.push(frame);
+
+          // Log cada 30 frames para no saturar la consola
+          if (capturedFramesRef.current.length % 30 === 0) {
+            console.log(`📹 Capturando frames: ${capturedFramesRef.current.length}`);
+          }
         }
       }
 
       // === INFERENCIA PARA MODO TENSORFLOW ===
-      if (mode === "tensorflow") {
+      if (modeRef.current === "tensorflow") {
         const now = performance.now();
         if (now - lastInferAtRef.current > 225) {
           lastInferAtRef.current = now;
