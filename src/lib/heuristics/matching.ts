@@ -137,18 +137,39 @@ export function matchSequence(
     console.log(`   Distancia objetivo: ${bestDistance.toFixed(4)}`);
 
     // Si algún impostor está SIGNIFICATIVAMENTE más cerca que el objetivo, rechazar
-    // Usamos márgenes diferentes según tipo de seña (dinámicas usan distancias DTW más pequeñas)
-    const impostorMargin = signType === "dynamic" ? 0.03 : 0.25;
-    const threshold = bestDistance - impostorMargin;
+    // Para dinámicas usamos RATIO (porcentaje), para estáticas diferencia absoluta
+    let shouldReject = false;
 
-    console.log(`   Umbral impostor (objetivo - ${impostorMargin}): ${threshold.toFixed(4)}`);
+    if (signType === "dynamic") {
+      // Dinámicas: el impostor debe estar al menos 20% más lejos
+      const ratio = bestImpostorDist / bestDistance;
+      const minRatio = 1.20; // 20% más lejos
+      console.log(`   Ratio impostor/objetivo: ${ratio.toFixed(3)} (mínimo: ${minRatio})`);
 
-    if (bestImpostorDist < threshold) {
-      console.log(`   ❌ RECHAZADO: impostor ${bestImpostorDist.toFixed(4)} < ${threshold.toFixed(4)}`);
-      console.log(`   → La letra "${bestImpostorLetter}" está más cerca que "${targetLetter}"`);
-      // Usar distancia artificial muy alta para garantizar score 0-25%
+      if (ratio < minRatio) {
+        console.log(`   ❌ RECHAZADO: ratio ${ratio.toFixed(3)} < ${minRatio}`);
+        console.log(`   → La letra "${bestImpostorLetter}" está demasiado cerca de "${targetLetter}"`);
+        shouldReject = true;
+      } else {
+        console.log(`   ✅ PASÓ: impostor está lo suficientemente lejos (${((ratio - 1) * 100).toFixed(1)}% más lejos)`);
+      }
+    } else {
+      // Estáticas: diferencia absoluta
+      const impostorMargin = 0.25;
+      const threshold = bestDistance - impostorMargin;
+      console.log(`   Umbral impostor (objetivo - ${impostorMargin}): ${threshold.toFixed(4)}`);
+
+      if (bestImpostorDist < threshold) {
+        console.log(`   ❌ RECHAZADO: impostor ${bestImpostorDist.toFixed(4)} < ${threshold.toFixed(4)}`);
+        console.log(`   → La letra "${bestImpostorLetter}" está más cerca que "${targetLetter}"`);
+        shouldReject = true;
+      } else {
+        console.log(`   ✅ PASÓ: impostor no está demasiado cerca`);
+      }
+    }
+
+    if (shouldReject) {
       const artificialDistance = rejectThreshold * 2.0;
-
       return {
         score: distanceToScore(artificialDistance, acceptThreshold, rejectThreshold, config.strictnessFactor),
         distance: bestDistance,
@@ -157,7 +178,6 @@ export function matchSequence(
         topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
       };
     }
-    console.log(`   ✅ PASÓ: impostor no está demasiado cerca`);
 
     // Check adicional: si la diferencia entre objetivo e impostores es pequeña,
     // la seña no es lo suficientemente distintiva
