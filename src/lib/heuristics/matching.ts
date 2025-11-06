@@ -68,6 +68,8 @@ export function matchSequence(
 
   // 1. Rechazo estricto: si la mejor distancia supera el umbral de rechazo
   if (bestDistance >= rejectThreshold) {
+    console.log(`❌ Distancia supera rejectThreshold: ${bestDistance.toFixed(4)} >= ${rejectThreshold.toFixed(2)}`);
+
     return {
       score: distanceToScore(bestDistance, acceptThreshold, rejectThreshold, config.strictnessFactor),
       distance: bestDistance,
@@ -82,11 +84,14 @@ export function matchSequence(
   console.log(`📏 Top-2 margin: ${(margin * 100).toFixed(2)}% (threshold: ${(config.top2MarginThreshold * 100).toFixed(0)}%)`);
 
   if (margin < config.top2MarginThreshold) {
-    // Ambigüedad detectada - aplicar penalización
+    // Ambigüedad detectada - aplicar penalización fuerte
     console.log(`⚠️ Ambigüedad detectada: margin ${(margin * 100).toFixed(2)}% < ${(config.top2MarginThreshold * 100).toFixed(0)}%`);
 
+    // Usar distancia artificial alta para garantizar score bajo (26-50%)
+    const artificialDistance = acceptThreshold + (rejectThreshold - acceptThreshold) * 0.8; // ~80% del rango
+
     const degradedScore = distanceToScore(
-      bestDistance * 1.3, // Penalizar 30%
+      artificialDistance,
       acceptThreshold,
       rejectThreshold,
       config.strictnessFactor
@@ -125,8 +130,12 @@ export function matchSequence(
 
     if (bestImpostorDist < threshold) {
       console.log(`❌ Impostor '${bestImpostorLetter}' SIGNIFICATIVAMENTE más cercano: ${bestImpostorDist.toFixed(4)} < ${threshold.toFixed(4)} (margen: ${impostorMargin})`);
+
+      // Usar distancia artificial muy alta para garantizar score 0-25%
+      const artificialDistance = rejectThreshold * 2.0;
+
       return {
-        score: distanceToScore(bestDistance * 1.5, acceptThreshold, rejectThreshold, config.strictnessFactor),
+        score: distanceToScore(artificialDistance, acceptThreshold, rejectThreshold, config.strictnessFactor),
         distance: bestDistance,
         matchedTemplateId: bestTemplate.id,
         decision: "rejected",
