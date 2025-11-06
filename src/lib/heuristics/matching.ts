@@ -47,10 +47,14 @@ export function matchSequence(
     }
   });
 
+  console.log(`🔢 Distancias calculadas (${signType}):`, distances.map(d => d.toFixed(4)).join(", "));
+
   // Encontrar la mejor coincidencia
   const bestIdx = findBestMatchIndex(distances);
   const bestDistance = distances[bestIdx];
   const bestTemplate = templatesForLetter[bestIdx];
+
+  console.log(`🎯 Mejor coincidencia: ${bestTemplate.id} con distancia ${bestDistance.toFixed(4)}`);
 
   // Seleccionar umbrales según tipo
   const acceptThreshold = signType === "static"
@@ -75,8 +79,12 @@ export function matchSequence(
 
   // 2. Top-2 margin: si hay poca diferencia entre las dos mejores, hay ambigüedad
   const margin = calculateTop2Margin(distances);
+  console.log(`📏 Top-2 margin: ${(margin * 100).toFixed(2)}% (threshold: ${(config.top2MarginThreshold * 100).toFixed(0)}%)`);
+
   if (margin < config.top2MarginThreshold) {
     // Ambigüedad detectada - aplicar penalización
+    console.log(`⚠️ Ambigüedad detectada: margin ${(margin * 100).toFixed(2)}% < ${(config.top2MarginThreshold * 100).toFixed(0)}%`);
+
     const degradedScore = distanceToScore(
       bestDistance * 1.3, // Penalizar 30%
       acceptThreshold,
@@ -104,9 +112,11 @@ export function matchSequence(
     });
 
     const bestImpostorDist = Math.min(...impostorDistances);
+    console.log(`🕵️ Impostor check: mejor impostor = ${bestImpostorDist.toFixed(4)} vs objetivo = ${bestDistance.toFixed(4)}`);
 
     // Si algún impostor está más cerca que el objetivo, rechazar
     if (bestImpostorDist < bestDistance * 0.95) { // Margen del 5%
+      console.log(`❌ Impostor más cercano que objetivo: ${bestImpostorDist.toFixed(4)} < ${(bestDistance * 0.95).toFixed(4)}`);
       return {
         score: distanceToScore(bestDistance * 1.5, acceptThreshold, rejectThreshold, config.strictnessFactor),
         distance: bestDistance,
@@ -118,10 +128,14 @@ export function matchSequence(
   }
 
   // === DECISIÓN FINAL ===
+  console.log(`🎚️ Thresholds: accept=${acceptThreshold.toFixed(2)}, reject=${rejectThreshold.toFixed(2)}`);
+
   const decision: "accepted" | "rejected" | "ambiguous" =
     bestDistance <= acceptThreshold ? "accepted" :
     bestDistance >= rejectThreshold ? "rejected" :
     "ambiguous";
+
+  console.log(`✅ Decisión final: ${decision} (distancia ${bestDistance.toFixed(4)} vs thresholds)`);
 
   const score = distanceToScore(
     bestDistance,
