@@ -178,8 +178,11 @@ export default function PracticeModal({
     await new Promise(resolve => setTimeout(resolve, 500));
 
     const captured = capturedFramesRef.current;
+    console.log(`\n🔍 ===== ANÁLISIS HEURÍSTICO: ${label} =====`);
+    console.log(`📊 Frames capturados: ${captured.length}`);
 
     if (captured.length < DEFAULT_CONFIG.minFramesRequired) {
+      console.log(`❌ Muy pocos frames (mínimo: ${DEFAULT_CONFIG.minFramesRequired})`);
       setHeuristicResult({
         score: 0,
         decision: "rejected",
@@ -191,7 +194,10 @@ export default function PracticeModal({
 
     // Obtener plantillas de la letra objetivo
     const targetTemplates = templatesRef.current;
+    console.log(`📁 Plantillas de "${label}": ${targetTemplates.length}`);
+
     if (targetTemplates.length === 0) {
+      console.log(`❌ No hay plantillas para la letra "${label}"`);
       setHeuristicResult({
         score: 0,
         decision: "rejected",
@@ -203,9 +209,22 @@ export default function PracticeModal({
 
     // Seleccionar impostores
     const impostors = selectImpostorTemplates(templateDictRef.current, label, 5);
+    console.log(`👥 Impostores seleccionados: ${impostors.length} letras diferentes`);
 
     // Ejecutar matching
     const result = matchSequence(captured, targetTemplates, DEFAULT_CONFIG, impostors);
+
+    console.log(`\n📈 RESULTADO:`);
+    console.log(`   Score: ${result.score.toFixed(2)}%`);
+    console.log(`   Decision: ${result.decision}`);
+    console.log(`   Distance: ${result.distance.toFixed(4)}`);
+    if (result.topCandidates && result.topCandidates.length > 0) {
+      console.log(`   Top 3 candidatos:`);
+      result.topCandidates.forEach((c, i) => {
+        console.log(`      ${i + 1}. ${c.letter}: ${c.avgDistance.toFixed(4)}`);
+      });
+    }
+    console.log(`======================================\n`);
 
     setHeuristicResult({
       score: Math.round(result.score),

@@ -35,6 +35,12 @@ export function matchSequence(
 
   // Determinar el tipo de seña (estática o dinámica) según las plantillas
   const signType = templatesForLetter[0].type;
+  const targetLetter = templatesForLetter[0].letter;
+
+  console.log(`\n🔬 MATCHING ENGINE - Letra: ${targetLetter}`);
+  console.log(`   Tipo: ${signType}`);
+  console.log(`   Frames capturados: ${capturedSeq.length} → preprocesados: ${preprocessed.length}`);
+  console.log(`   Plantillas disponibles: ${templatesForLetter.length}`);
 
   // Calcular distancias contra todas las plantillas del objetivo
   const distances = templatesForLetter.map(template => {
@@ -60,10 +66,17 @@ export function matchSequence(
     ? config.staticRejectThreshold
     : config.dynamicRejectThreshold;
 
+  console.log(`\n📏 DISTANCIAS:`);
+  console.log(`   Mejor distancia: ${bestDistance.toFixed(4)}`);
+  console.log(`   Umbral aceptación: ${acceptThreshold}`);
+  console.log(`   Umbral rechazo: ${rejectThreshold}`);
+
   // === CONTROL DE FALSOS POSITIVOS ===
 
   // 1. Rechazo estricto: si la mejor distancia supera el umbral de rechazo
+  console.log(`\n🚦 CHECK 1: Rechazo estricto`);
   if (bestDistance >= rejectThreshold) {
+    console.log(`   ❌ RECHAZADO: distancia ${bestDistance.toFixed(4)} >= ${rejectThreshold}`);
     return {
       score: distanceToScore(bestDistance, acceptThreshold, rejectThreshold, config.strictnessFactor),
       distance: bestDistance,
@@ -72,11 +85,16 @@ export function matchSequence(
       topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
     };
   }
+  console.log(`   ✅ PASÓ: distancia ${bestDistance.toFixed(4)} < ${rejectThreshold}`);
 
   // 2. Top-2 margin: si hay poca diferencia entre las dos mejores, hay ambigüedad
   const margin = calculateTop2Margin(distances);
+  console.log(`\n🚦 CHECK 2: Top-2 margin`);
+  console.log(`   Margen entre top-2: ${margin.toFixed(6)}`);
+  console.log(`   Umbral mínimo: ${config.top2MarginThreshold}`);
 
   if (margin < config.top2MarginThreshold) {
+    console.log(`   ⚠️ AMBIGUO: margen ${margin.toFixed(6)} < ${config.top2MarginThreshold}`);
     // Ambigüedad detectada - aplicar penalización fuerte
 
     // Usar distancia artificial alta para garantizar score bajo (26-50%)
@@ -97,9 +115,12 @@ export function matchSequence(
       topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
     };
   }
+  console.log(`   ✅ PASÓ: margen suficiente`);
 
   // 3. Impostor check: comparar contra plantillas de otras letras
+  console.log(`\n🚦 CHECK 3: Impostor check`);
   if (config.enableImpostorCheck && impostorTemplates && impostorTemplates.length > 0) {
+    console.log(`   Comparando contra ${impostorTemplates.length} plantillas de otras letras...`);
     const impostorDistances = impostorTemplates.map(template => {
       if (signType === "static") {
         return compareStatic(preprocessed, template.frames, config);
@@ -110,13 +131,21 @@ export function matchSequence(
 
     const bestImpostorIdx = impostorDistances.indexOf(Math.min(...impostorDistances));
     const bestImpostorDist = impostorDistances[bestImpostorIdx];
+    const bestImpostorLetter = impostorTemplates[bestImpostorIdx].letter;
+
+    console.log(`   Mejor impostor: letra "${bestImpostorLetter}" con distancia ${bestImpostorDist.toFixed(4)}`);
+    console.log(`   Distancia objetivo: ${bestDistance.toFixed(4)}`);
 
     // Si algún impostor está SIGNIFICATIVAMENTE más cerca que el objetivo, rechazar
     // Usamos diferencia absoluta en lugar de ratio para ser más permisivos
     const impostorMargin = 0.25; // Balanceado: más permisivo que 0.4 original
     const threshold = bestDistance - impostorMargin;
 
+    console.log(`   Umbral impostor (objetivo - 0.25): ${threshold.toFixed(4)}`);
+
     if (bestImpostorDist < threshold) {
+      console.log(`   ❌ RECHAZADO: impostor ${bestImpostorDist.toFixed(4)} < ${threshold.toFixed(4)}`);
+      console.log(`   → La letra "${bestImpostorLetter}" está más cerca que "${targetLetter}"`);
       // Usar distancia artificial muy alta para garantizar score 0-25%
       const artificialDistance = rejectThreshold * 2.0;
 
@@ -128,6 +157,7 @@ export function matchSequence(
         topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
       };
     }
+    console.log(`   ✅ PASÓ: impostor no está demasiado cerca`);
 
     // Check adicional: si la diferencia entre objetivo e impostores es pequeña,
     // la seña no es lo suficientemente distintiva
@@ -135,7 +165,14 @@ export function matchSequence(
     const distinctiveness = avgImpostorDist - bestDistance;
     const distinctivenessThreshold = 0.08; // Balanceado: más permisivo que 0.10
 
+    console.log(`\n🚦 CHECK 4: Distintividad`);
+    console.log(`   Distancia promedio impostores: ${avgImpostorDist.toFixed(4)}`);
+    console.log(`   Distancia objetivo: ${bestDistance.toFixed(4)}`);
+    console.log(`   Distintividad (diferencia): ${distinctiveness.toFixed(4)}`);
+    console.log(`   Umbral mínimo: ${distinctivenessThreshold}`);
+
     if (distinctiveness < distinctivenessThreshold) {
+      console.log(`   ❌ RECHAZADO: seña no distintiva (${distinctiveness.toFixed(4)} < ${distinctivenessThreshold})`);
       const artificialDistance = rejectThreshold * 2.0;
       return {
         score: distanceToScore(artificialDistance, acceptThreshold, rejectThreshold, config.strictnessFactor),
@@ -145,9 +182,13 @@ export function matchSequence(
         topCandidates: buildTopCandidates(templatesForLetter, distances, 3),
       };
     }
+    console.log(`   ✅ PASÓ: seña suficientemente distintiva`);
+  } else {
+    console.log(`   ⊘ DESHABILITADO o sin impostores`);
   }
 
   // === DECISIÓN FINAL ===
+  console.log(`\n✨ DECISIÓN FINAL:`);
   const decision: "accepted" | "rejected" | "ambiguous" =
     bestDistance <= acceptThreshold ? "accepted" :
     bestDistance >= rejectThreshold ? "rejected" :
@@ -159,6 +200,10 @@ export function matchSequence(
     rejectThreshold,
     config.strictnessFactor
   );
+
+  console.log(`   Distancia: ${bestDistance.toFixed(4)}`);
+  console.log(`   Decision: ${decision}`);
+  console.log(`   Score: ${score.toFixed(2)}%`);
 
   return {
     score,
