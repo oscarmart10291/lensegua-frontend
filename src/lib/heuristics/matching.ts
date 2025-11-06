@@ -163,7 +163,7 @@ export function matchSequence(
     // la seña no es lo suficientemente distintiva
     const avgImpostorDist = impostorDistances.reduce((a, b) => a + b, 0) / impostorDistances.length;
     const distinctiveness = avgImpostorDist - bestDistance;
-    const distinctivenessThreshold = 0.08; // Balanceado: más permisivo que 0.10
+    const distinctivenessThreshold = -0.05; // Permite valores negativos pequeños (impostores ligeramente más cercanos en promedio)
 
     console.log(`\n🚦 CHECK 4: Distintividad`);
     console.log(`   Distancia promedio impostores: ${avgImpostorDist.toFixed(4)}`);

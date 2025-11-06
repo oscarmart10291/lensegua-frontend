@@ -221,7 +221,7 @@ export default function PracticeModal({
     if (result.topCandidates && result.topCandidates.length > 0) {
       console.log(`   Top 3 candidatos:`);
       result.topCandidates.forEach((c, i) => {
-        console.log(`      ${i + 1}. ${c.letter}: ${c.avgDistance.toFixed(4)}`);
+        console.log(`      ${i + 1}. ${c.letter}: ${c.distance.toFixed(4)}`);
       });
     }
     console.log(`======================================\n`);
