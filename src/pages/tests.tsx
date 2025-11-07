@@ -24,8 +24,17 @@ import { getAbecedarioMaybe as getAbecedarioUrls, AbcMediaItem } from "../lib/st
 import { Hands, HAND_CONNECTIONS, Results } from "@mediapipe/hands";
 import { drawConnectors } from "@mediapipe/drawing_utils";
 
-// 👇 TensorFlow.js para detección real
-import * as tf from "@tensorflow/tfjs";
+// 👇 Sistema heurístico (en lugar de TensorFlow)
+import {
+  matchSequence,
+  parseLandmarks,
+  loadTemplatesForLetter,
+  selectImpostorTemplates,
+  DEFAULT_CONFIG,
+  type Template,
+  type Sequence,
+  type TemplateDict,
+} from "../lib/heuristics";
 
 // 👇 API para progreso y monedas
 import { getUserStats, registrarIntento, UserStats } from "../lib/api";
@@ -33,6 +42,9 @@ import { useAuth } from "../auth/AuthContext";
 
 type MedalTier = "none" | "bronze" | "silver" | "gold";
 type MPPoint = { x: number; y: number; z?: number };
+
+// SOLUCIÓN DEFINITIVA: Promesa compartida a nivel de módulo para evitar doble inicialización
+let cameraInitPromise: Promise<void> | null = null;
 
 export type ModuleProgress = {
   id: string;
@@ -55,62 +67,18 @@ function medalLabel(tier: MedalTier) {
   }
 }
 
-// =============== Configuración para detección ===============
-const CFG = {
-  MIRROR_X: true,
-  USE_Z_BY_F: (F: number) => F === 63,
-  SMOOTH_EMA: 0.5,
-  MIN_CONFIDENCE: 0.60, // 60% mínimo para marcar como correcta
-  DECAY_NOT_CONFIDENT: 0.90,
-  MODEL_URL: "/models/estatico_last/model.json",
+// =============== Configuración para detección heurística ===============
+// IMPORTANTE: Usar los mismos parámetros que lecciones (PracticeModal)
+const HEURISTIC_CFG = {
+  MIN_SCORE: 60,          // 60% mínimo para marcar como correcta
+  CAPTURE_DURATION: 3000, // 3 segundos capturando frames
+  MIN_FRAMES: 20,         // Mínimo de frames para analizar
+  TEMPLATES_PATH: "/landmarks",
+  MAX_TEMPLATES_PER_LETTER: 3,  // Igual que lecciones (era 10, muy estricto)
+  MAX_TEMPLATES_IMPOSTOR: 1,    // 1 plantilla por impostor (igual que lecciones)
 };
 
 const MAX_ITEMS = 26; // todas las letras A-Z
-
-// =============== Helper para convertir landmarks a vector ===============
-function landmarksToVector(hand: MPPoint[], F: number): Float32Array {
-  const expectZ = CFG.USE_Z_BY_F(F);
-
-  let pts = hand.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0 }));
-  if (CFG.MIRROR_X) for (const p of pts) p.x = 1 - p.x;
-
-  // Origen en muñeca
-  const wrist = pts[0];
-  for (const p of pts) {
-    p.x -= wrist.x;
-    p.y -= wrist.y;
-    p.z -= wrist.z;
-  }
-
-  // Escala bbox
-  let minX = +Infinity,
-    minY = +Infinity,
-    maxX = -Infinity,
-    maxY = -Infinity;
-  for (const p of pts) {
-    if (p.x < minX) minX = p.x;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.y > maxY) maxY = p.y;
-  }
-  const scale = Math.max(1e-6, Math.hypot(maxX - minX, maxY - minY));
-  for (const p of pts) {
-    p.x /= scale;
-    p.y /= scale;
-    p.z /= scale;
-  }
-
-  const out: number[] = [];
-  for (const p of pts) {
-    out.push(p.x, p.y);
-    if (expectZ) out.push(p.z);
-  }
-
-  if (out.length < F) while (out.length < F) out.push(0);
-  else if (out.length > F) out.length = F;
-
-  return new Float32Array(out);
-}
 
 // =============== Modal interno para el Test Abecedario ===============
 function AbecedarioTestModal({
@@ -127,7 +95,7 @@ function AbecedarioTestModal({
   const [idx, setIdx] = useState(0);
 
   // Estado de detección
-  const [score, setScore] = useState(0); // 0..1
+  const [score, setScore] = useState(0); // 0..100
   const [correct, setCorrect] = useState(false);
   const autoNextRef = useRef<number | null>(null);
 
@@ -138,19 +106,18 @@ function AbecedarioTestModal({
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
-  const lastInferAtRef = useRef(0);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(true);
+  const cameraReadyRef = useRef(false); // Para saber si la cámara está lista
 
-  // Modelo de TensorFlow
-  const modelRef = useRef<tf.LayersModel | null>(null);
-  const [inputKind, setInputKind] = useState<"vector" | "sequence" | null>(null);
-  const [vecLen, setVecLen] = useState<number | null>(null);
-  const [seqShape, setSeqShape] = useState<{ T: number; F: number } | null>(null);
-  const seqBufferRef = useRef<number[][]>([]);
-
-  // Mapeo de clases
-  const [classIndex, setClassIndex] = useState<Record<string, number> | null>(null);
+  // Sistema heurístico - Estados y refs
+  type HeuristicState = "idle" | "countdown" | "capturing" | "analyzing" | "result";
+  const [heuristicState, setHeuristicState] = useState<HeuristicState>("idle");
+  const heuristicStateRef = useRef<HeuristicState>("idle");
+  const [countdown, setCountdown] = useState(3);
+  const countdownTimerRef = useRef<number | null>(null);
+  const capturedFramesRef = useRef<Sequence>([]);
+  const templatesRef = useRef<Template[]>([]);
+  const templateDictRef = useRef<TemplateDict>({});
+  const [heuristicResult, setHeuristicResult] = useState<{ score: number; decision: string; distance: number } | null>(null);
 
   // Cargar imágenes del abecedario desde Firebase
   useEffect(() => {
@@ -180,93 +147,349 @@ function AbecedarioTestModal({
   const resetScoreForCurrent = useCallback(() => {
     setScore(0);
     setCorrect(false);
+    setHeuristicState("idle");
+    heuristicStateRef.current = "idle";
+    setHeuristicResult(null);
     if (autoNextRef.current) {
       window.clearTimeout(autoNextRef.current);
       autoNextRef.current = null;
     }
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
   }, []);
 
+  // Resetear score solo cuando se abre el modal (NO cuando cambia idx)
   useEffect(() => {
     if (!open) return;
     resetScoreForCurrent();
-  }, [open, idx, resetScoreForCurrent]);
+  }, [open, resetScoreForCurrent]);
 
-  // Cargar modelo de TensorFlow
+  // Analizar secuencia capturada con el sistema heurístico
+  const analyzeCapture = useCallback(async () => {
+    const captured = capturedFramesRef.current;
+    const currentLabel = items[idx]?.label;
+
+    console.log(`\n======================================`);
+    console.log(`🔍 ANÁLISIS DE SEÑA: "${currentLabel}"`);
+    console.log(`======================================`);
+
+    // Cambiar a estado "analyzing"
+    setHeuristicState("analyzing");
+    heuristicStateRef.current = "analyzing";
+
+    if (captured.length < HEURISTIC_CFG.MIN_FRAMES) {
+      console.log(`⚠️ Pocos frames capturados: ${captured.length} < ${HEURISTIC_CFG.MIN_FRAMES}`);
+      setHeuristicResult({
+        score: 0,
+        decision: "rejected",
+        distance: 999,
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
+      return;
+    }
+
+    if (!currentLabel) {
+      console.log("⚠️ No hay letra seleccionada");
+      setHeuristicState("idle");
+      heuristicStateRef.current = "idle";
+      return;
+    }
+
+    try {
+      const targetTemplates = templatesRef.current;
+
+      if (targetTemplates.length === 0) {
+        console.warn(`⚠️ No hay plantillas para "${currentLabel}"`);
+        setHeuristicResult({
+          score: 0,
+          decision: "rejected",
+          distance: 999,
+        });
+        setHeuristicState("result");
+        heuristicStateRef.current = "result";
+        return;
+      }
+
+      // Seleccionar impostores (otras letras)
+      const impostors = selectImpostorTemplates(templateDictRef.current, currentLabel, 5);
+      console.log(`👥 Impostores seleccionados: ${impostors.length} letras diferentes`);
+
+      console.log(`🔍 Analizando ${captured.length} frames contra ${targetTemplates.length} plantillas de "${currentLabel}"`);
+
+      // Ejecutar matching con 4 checks
+      const result = matchSequence(captured, targetTemplates, DEFAULT_CONFIG, impostors);
+
+      const finalScore = Math.round(result.score);
+
+      console.log(`\n📈 RESULTADO:`);
+      console.log(`   Score: ${finalScore}%`);
+      console.log(`   Decision: ${result.decision}`);
+      console.log(`   Distance: ${result.distance.toFixed(4)}`);
+      console.log(`   Mejor plantilla: ${result.bestTemplateId}`);
+      if (result.topCandidates && result.topCandidates.length > 0) {
+        console.log(`   Top 3 candidatos:`);
+        result.topCandidates.forEach((c, i) => {
+          console.log(`      ${i + 1}. ${c.letter}: ${c.distance.toFixed(4)}`);
+        });
+      }
+      console.log(`======================================\n`);
+
+      setScore(finalScore);
+      setHeuristicResult({
+        score: finalScore,
+        decision: result.decision,
+        distance: result.distance,
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
+
+      // Si es correcto, registrar en DB (sin auto-avance)
+      if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE) {
+        setCorrect(true);
+
+        registrarIntento("abecedario", finalScore, true)
+          .then((response) => {
+            console.log("✅ Intento registrado:", response);
+            if (response.coinEarned) {
+              console.log("🪙 +1 moneda ganada!");
+            }
+            // Actualizar barra de progreso
+            if (onProgressUpdate) {
+              console.log("📊 Actualizando barra de progreso...");
+              onProgressUpdate();
+            }
+          })
+          .catch((err) => {
+            console.error("❌ Error al registrar intento:", err);
+          });
+      }
+    } catch (err) {
+      console.error("❌ Error en análisis heurístico:", err);
+      setHeuristicResult({
+        score: 0,
+        decision: "rejected",
+        distance: 999,
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
+    }
+  }, [items, idx, onProgressUpdate]);
+
+  // Funciones para el flujo heurístico
+  const startCapture = useCallback(() => {
+    console.log("🎬 Iniciando captura...");
+    setHeuristicState("capturing");
+    heuristicStateRef.current = "capturing";
+    setCountdown(3); // 3 segundos para realizar la seña
+    capturedFramesRef.current = [];
+
+    let count = 3;
+    countdownTimerRef.current = window.setInterval(() => {
+      count--;
+      setCountdown(count);
+      if (count === 0) {
+        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+        console.log("⏱️ Countdown terminado, iniciando análisis...");
+        analyzeCapture();
+      }
+    }, 1000);
+  }, [analyzeCapture]);
+
+  const startHeuristicCountdown = useCallback(() => {
+    console.log("⏰ Iniciando countdown de preparación...");
+    setHeuristicState("countdown");
+    heuristicStateRef.current = "countdown";
+    setCountdown(3);
+    capturedFramesRef.current = [];
+
+    let count = 3;
+    countdownTimerRef.current = window.setInterval(() => {
+      count--;
+      setCountdown(count);
+      if (count === 0) {
+        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+        startCapture();
+      }
+    }, 1000);
+  }, [startCapture]);
+
+  const retryHeuristic = useCallback(() => {
+    setHeuristicResult(null);
+    capturedFramesRef.current = [];
+    startHeuristicCountdown();
+  }, [startHeuristicCountdown]);
+
+  const goToNextLetter = useCallback(async () => {
+    console.log("➡️ Avanzando a la siguiente letra...");
+
+    // Resetear estados visuales
+    setCorrect(false);
+    setHeuristicResult(null);
+    setHeuristicState("idle");
+    heuristicStateRef.current = "idle";
+    capturedFramesRef.current = [];
+
+    // Incrementar índice
+    const nextIdx = idx + 1;
+    if (nextIdx >= items.length) {
+      alert("¡Test finalizado! ✅");
+      return;
+    }
+
+    setIdx(nextIdx);
+    const nextLabel = items[nextIdx]?.label;
+
+    if (!nextLabel) {
+      console.error("❌ No se pudo obtener la siguiente letra");
+      return;
+    }
+
+    console.log(`🔄 Cargando plantillas para la nueva letra: "${nextLabel}"`);
+
+    try {
+      // Cargar plantillas de la nueva letra
+      const templates = await loadTemplatesForLetter(
+        HEURISTIC_CFG.TEMPLATES_PATH,
+        nextLabel,
+        HEURISTIC_CFG.MAX_TEMPLATES_PER_LETTER
+      );
+
+      templatesRef.current = templates;
+      templateDictRef.current[nextLabel] = templates;
+      console.log(`✅ ${templates.length} plantillas cargadas para "${nextLabel}"`);
+
+      // Pre-cargar impostores en segundo plano
+      const allLetters = items.map(it => it.label).filter(Boolean);
+      const otherLetters = allLetters.filter(l => l !== nextLabel);
+      const toPreload = otherLetters.slice(0, 5);
+
+      console.log(`📚 Pre-cargando ${toPreload.length} letras adicionales...`);
+      for (const letter of toPreload) {
+        if (!templateDictRef.current[letter]) {
+          const letterTemplates = await loadTemplatesForLetter(
+            HEURISTIC_CFG.TEMPLATES_PATH,
+            letter,
+            HEURISTIC_CFG.MAX_TEMPLATES_IMPOSTOR
+          );
+          templateDictRef.current[letter] = letterTemplates;
+        }
+      }
+
+      // La cámara ya está corriendo, solo iniciar countdown
+      console.log("✅ Plantillas listas, iniciando countdown...");
+      startHeuristicCountdown();
+
+    } catch (err) {
+      console.error(`❌ Error cargando plantillas para "${nextLabel}":`, err);
+      alert("Error al cargar las plantillas. Intenta de nuevo.");
+    }
+  }, [idx, items, startHeuristicCountdown]);
+
+  // Cargar plantillas SOLO para la primera letra cuando se abre el modal
+  // Ya NO se vuelve a ejecutar cuando cambia idx (eso lo hace goToNextLetter)
   useEffect(() => {
     if (!open) return;
+    if (items.length === 0) return; // Esperar a que items se carguen
+
+    const currentLabel = items[idx]?.label;
+    if (!currentLabel) return;
+
     let active = true;
 
     (async () => {
       try {
-        await tf.ready();
-        const m = await tf.loadLayersModel(CFG.MODEL_URL);
+        console.log(`🔧 Cargando plantillas iniciales para "${currentLabel}"...`);
+
+        // Cargar solo las plantillas de la letra inicial
+        const templates = await loadTemplatesForLetter(
+          HEURISTIC_CFG.TEMPLATES_PATH,
+          currentLabel,
+          HEURISTIC_CFG.MAX_TEMPLATES_PER_LETTER
+        );
+
         if (!active) return;
-        modelRef.current = m;
 
-        const inShape = m.inputs[0].shape as (number | null)[];
-        if (inShape.length === 2) {
-          setInputKind("vector");
-          setVecLen(Number(inShape[1]));
-        } else if (inShape.length === 3) {
-          setInputKind("sequence");
-          setSeqShape({ T: Number(inShape[1]), F: Number(inShape[2]) });
+        templatesRef.current = templates;
+        templateDictRef.current[currentLabel] = templates;
+        console.log(`✅ ${templates.length} plantillas cargadas para "${currentLabel}"`);
+
+        // Esperar a que la cámara esté lista antes de iniciar countdown
+        let attempts = 0;
+        const maxAttempts = 50; // 50 * 100ms = 5 segundos
+        const waitForCamera = () => {
+          if (!active) return;
+
+          attempts++;
+
+          if (cameraReadyRef.current) {
+            console.log(`✅ Cámara lista! Iniciando countdown para letra "${currentLabel}"`);
+            startHeuristicCountdown();
+          } else if (attempts >= maxAttempts) {
+            console.error(`❌ Timeout esperando la cámara (${maxAttempts * 100}ms)`);
+            alert("La cámara tardó demasiado en inicializarse. Por favor cierra y vuelve a abrir el modal.");
+          } else {
+            console.log(`⏳ Esperando a que la cámara esté lista... (intento ${attempts}/${maxAttempts})`);
+            setTimeout(waitForCamera, 100);
+          }
+        };
+
+        waitForCamera();
+
+        // Pre-cargar otras letras en segundo plano
+        if (active) {
+          const allLetters = items.map(it => it.label).filter(Boolean);
+          const otherLetters = allLetters.filter(l => l !== currentLabel);
+          const toPreload = otherLetters.slice(0, 5);
+
+          console.log(`📚 Pre-cargando ${toPreload.length} letras adicionales...`);
+
+          for (const letter of toPreload) {
+            if (!active) break;
+            if (!templateDictRef.current[letter]) {
+              const letterTemplates = await loadTemplatesForLetter(
+                HEURISTIC_CFG.TEMPLATES_PATH,
+                letter,
+                HEURISTIC_CFG.MAX_TEMPLATES_IMPOSTOR
+              );
+              if (active) {
+                templateDictRef.current[letter] = letterTemplates;
+              }
+            }
+          }
+
+          if (active) {
+            console.log(`✅ Pre-carga completada. Letras disponibles: ${Object.keys(templateDictRef.current).length}`);
+          }
         }
-
-        console.log("✅ Modelo cargado:", CFG.MODEL_URL);
       } catch (err) {
-        console.error("❌ Error al cargar modelo:", err);
+        console.error(`❌ Error cargando plantillas para "${currentLabel}":`, err);
       }
     })();
 
     return () => {
       active = false;
-      modelRef.current = null;
-    };
-  }, [open]);
-
-  // Cargar mapeo de clases
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const base = CFG.MODEL_URL.replace(/\/model\.json$/i, "");
-        const resp = await fetch(`${base}/class_index.json`, { cache: "no-store" });
-        const fromFile = resp.ok ? await resp.json() : null;
-        if (cancelled) return;
-        if (fromFile) setClassIndex(fromFile);
-      } catch (err) {
-        console.warn("⚠️ No se pudo cargar class_index.json:", err);
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
       }
-    })();
-
-    return () => {
-      cancelled = true;
     };
-  }, [open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, items.length]); // SOLO cuando se abre el modal o se cargan items - NO cuando cambia idx
 
-  // Inicializar cámara y MediaPipe
-  const startCamera = useCallback(async () => {
+  // Función de inicialización separada (se ejecuta UNA SOLA VEZ)
+  const initializeCamera = useCallback(async () => {
+    console.log("🔒 [initializeCamera] Iniciando inicialización única...");
+
     try {
-      // Crear un nuevo AbortController para esta sesión de cámara
-      abortControllerRef.current = new AbortController();
-      const signal = abortControllerRef.current.signal;
-
-      // Verificar si el componente está montado antes de proceder
-      if (!mountedRef.current) return;
-
+      console.log("📷 Solicitando acceso a cámara...");
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false,
       });
-
-      // Verificar nuevamente después de la operación async
-      if (!mountedRef.current || signal.aborted) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-
+      console.log("✅ Stream de cámara obtenido");
       streamRef.current = stream;
 
       if (videoRef.current && mountedRef.current) {
@@ -290,7 +513,7 @@ function AbecedarioTestModal({
               await new Promise(resolve => setTimeout(resolve, 100));
 
               // Verificar que el componente sigue montado antes de reintentar
-              if (!mountedRef.current || signal.aborted) {
+              if (!mountedRef.current) {
                 console.log("ℹ️ Componente desmontado, cancelando reintentos");
                 return;
               }
@@ -304,9 +527,6 @@ function AbecedarioTestModal({
         }
       }
 
-      // Verificar nuevamente antes de inicializar MediaPipe
-      if (!mountedRef.current || signal.aborted) return;
-
       const hands = new Hands({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
       });
@@ -319,8 +539,6 @@ function AbecedarioTestModal({
       });
 
       hands.onResults((results: Results) => {
-        if (!mountedRef.current) return;
-
         const canvasEl = canvasRef.current;
         const videoEl = videoRef.current;
         if (!canvasEl || !videoEl) return;
@@ -328,12 +546,15 @@ function AbecedarioTestModal({
         const ctx = canvasEl.getContext("2d");
         if (!ctx) return;
 
-        canvasEl.width = videoEl.videoWidth || 1280;
-        canvasEl.height = videoEl.videoHeight || 720;
+        const w = (canvasEl.width = videoEl.videoWidth || 1280);
+        const h = (canvasEl.height = videoEl.videoHeight || 720);
 
-        ctx.save();
-        ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-        ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+        ctx.clearRect(0, 0, w, h);
+
+        // Usar results.image que ya viene procesado por MediaPipe en modo espejo
+        if (results.image) {
+          ctx.drawImage(results.image as any, 0, 0, w, h);
+        }
 
         const hand = results.multiHandLandmarks?.[0];
         if (hand) {
@@ -341,175 +562,78 @@ function AbecedarioTestModal({
             lineWidth: 2,
             color: "#ffffff",
           });
+          ctx.save();
           ctx.fillStyle = "#22c55e";
           ctx.strokeStyle = "#065f46";
           ctx.lineWidth = 1.5;
-          const R = Math.max(2.5, Math.min(canvasEl.width, canvasEl.height) * 0.006);
+          const R = Math.max(2.5, Math.min(w, h) * 0.006);
           for (const p of hand) {
-            const x = p.x * canvasEl.width;
-            const y = p.y * canvasEl.height;
+            const x = p.x * w;
+            const y = p.y * h;
             ctx.beginPath();
             ctx.arc(x, y, R, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
           }
-        }
-        ctx.restore();
+          ctx.restore();
 
-        const now = performance.now();
-        if (now - lastInferAtRef.current > 225) {
-          lastInferAtRef.current = now;
-          inferScore(results);
+          // Capturar frames solo durante el estado "capturing"
+          if (heuristicStateRef.current === "capturing") {
+            const frame = parseLandmarks(hand.map(p => ({ x: p.x, y: p.y, z: p.z ?? 0 })));
+            capturedFramesRef.current.push(frame);
+          }
         }
       });
-
-      if (!mountedRef.current || signal.aborted) {
-        hands.close();
-        return;
-      }
 
       handsRef.current = hands;
 
       // Bucle de envío de frames
       const processFrame = async () => {
-        if (!mountedRef.current || !videoRef.current || !handsRef.current || sendingRef.current) return;
+        if (!videoRef.current || !handsRef.current || sendingRef.current) return;
         sendingRef.current = true;
-        try {
-          await handsRef.current.send({ image: videoRef.current as any });
-        } catch (err) {
-          console.warn("Error al enviar frame:", err);
-        }
+        await handsRef.current.send({ image: videoRef.current as any });
         sendingRef.current = false;
-        if (mountedRef.current) {
-          rafRef.current = requestAnimationFrame(processFrame);
-        }
+        rafRef.current = requestAnimationFrame(processFrame);
       };
       rafRef.current = requestAnimationFrame(processFrame);
-    } catch (err: any) {
-      // Ignorar errores de abort, que son esperados cuando se cierra el modal
-      if (err.name === "AbortError" || err.message?.includes("aborted")) {
-        console.log("Inicialización de cámara cancelada (esperado)");
-        return;
-      }
-      console.error("❌ Error en startCamera:", err);
-      if (mountedRef.current) {
-        alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
-      }
+
+      // Marcar cámara como lista
+      cameraReadyRef.current = true;
+      console.log("✅✅✅ Cámara COMPLETAMENTE inicializada y lista para usar ✅✅✅");
+    } catch (err) {
+      console.error("❌ Error en initializeCamera:", err);
+      // Limpiar promesa y flags para permitir retry
+      cameraInitPromise = null;
+      cameraReadyRef.current = false;
+      alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
+      throw err;
     }
   }, []);
 
-  // Inferencia con el modelo
-  const inferScore = async (results: Results) => {
-    const model = modelRef.current;
-    if (!model || !inputKind) return;
-
-    const hand = results.multiHandLandmarks?.[0];
-    if (!hand) {
-      setScore((prev) => prev * CFG.DECAY_NOT_CONFIDENT);
+  // Wrapper que garantiza una sola inicialización
+  const startCamera = useCallback(async () => {
+    // Si ya está lista, no hacer nada
+    if (cameraReadyRef.current) {
+      console.log("⚠️ [startCamera] Cámara ya lista, ignorando");
       return;
     }
 
-    const currentLabel = items[idx]?.label;
-    if (!currentLabel || !classIndex) {
-      setScore((prev) => prev * CFG.DECAY_NOT_CONFIDENT);
-      return;
+    // CLAVE: Asignar la promesa de forma sincrónica con el check
+    if (!cameraInitPromise) {
+      console.log("🚀 [startCamera] Primera llamada, creando promesa...");
+      cameraInitPromise = initializeCamera();
+    } else {
+      console.log("⏳ [startCamera] Segunda llamada, esperando promesa existente...");
     }
 
-    const mappedIdx = classIndex[currentLabel];
-    if (typeof mappedIdx !== "number") {
-      setScore((prev) => prev * CFG.DECAY_NOT_CONFIDENT);
-      return;
-    }
-
-    try {
-      let probsArr: Float32Array | number[] | null = null;
-
-      if (inputKind === "vector" && vecLen) {
-        const frameVec = landmarksToVector(hand as MPPoint[], vecLen);
-        probsArr = await tf.tidy(() => {
-          const x = tf.tensor(frameVec, [1, vecLen]);
-          const out = model.predict(x) as tf.Tensor;
-          const soft = tf.softmax(out);
-          return soft.dataSync();
-        });
-      } else if (inputKind === "sequence" && seqShape) {
-        const { T, F } = seqShape;
-        const frameVec = landmarksToVector(hand as MPPoint[], F);
-        const buf = seqBufferRef.current;
-        buf.push(Array.from(frameVec));
-        if (buf.length > T) buf.shift();
-        const pad = Array.from({ length: Math.max(0, T - buf.length) }, () =>
-          new Array(F).fill(0)
-        );
-        const win = pad.concat(buf);
-        probsArr = await tf.tidy(() => {
-          const x = tf.tensor(win, [1, T, F]);
-          const out = model.predict(x) as tf.Tensor;
-          const soft = tf.softmax(out);
-          return soft.dataSync();
-        });
-      }
-
-      if (!probsArr) return;
-
-      const labelProb = probsArr[mappedIdx] ?? 0;
-
-      // Actualizar score con EMA
-      setScore((prev) => {
-        const ema = prev * CFG.SMOOTH_EMA + labelProb * (1 - CFG.SMOOTH_EMA);
-        const newScore = labelProb > 0 ? ema : ema * CFG.DECAY_NOT_CONFIDENT;
-
-        // Si alcanza el umbral y no está marcado como correcto
-        if (newScore >= CFG.MIN_CONFIDENCE && !correct) {
-          setCorrect(true);
-
-          // Registrar intento en la base de datos
-          const precision = Math.round(newScore * 100);
-          registrarIntento("abecedario", precision, true)
-            .then((response) => {
-              console.log("✅ Intento registrado:", response);
-              if (response.coinEarned) {
-                console.log("🪙 +1 moneda ganada!");
-              }
-              if (onProgressUpdate) {
-                onProgressUpdate();
-              }
-            })
-            .catch((err) => {
-              console.error("❌ Error al registrar intento:", err);
-            });
-
-          // Auto-avanzar a la siguiente letra
-          if (!autoNextRef.current) {
-            autoNextRef.current = window.setTimeout(() => {
-              autoNextRef.current = null;
-              setCorrect(false);
-              setIdx((p) => {
-                const nextIdx = p + 1;
-                if (nextIdx >= items.length) {
-                  alert("¡Test finalizado! ✅");
-                  return p;
-                }
-                return nextIdx;
-              });
-            }, 1200);
-          }
-        }
-
-        return newScore;
-      });
-    } catch (err) {
-      console.error("Error en inferencia:", err);
-    }
-  };
+    // Ambas llamadas esperan la MISMA promesa
+    await cameraInitPromise;
+    console.log("✅ [startCamera] Promesa completada");
+  }, [initializeCamera]);
 
   // Limpieza
   const cleanup = useCallback(() => {
-    // Abortar cualquier inicialización de cámara en progreso
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+    console.log("🧹 Limpiando recursos...");
 
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
@@ -528,26 +652,44 @@ function AbecedarioTestModal({
       window.clearTimeout(autoNextRef.current);
       autoNextRef.current = null;
     }
-  }, []);
 
-  useEffect(() => {
-    if (!open) {
-      mountedRef.current = false;
-      return;
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
     }
 
-    mountedRef.current = true;
-    startCamera();
+    // Limpiar promesa compartida a nivel de módulo
+    cameraInitPromise = null;
 
+    // Resetear flags de cámara
+    cameraReadyRef.current = false;
+
+    // Limpiar estado heurístico
+    setHeuristicState("idle");
+    heuristicStateRef.current = "idle";
+    capturedFramesRef.current = [];
+
+    console.log("✅ Recursos limpiados");
+  }, []);
+
+  // Iniciar cámara cuando se abre el modal
+  useEffect(() => {
+    if (!open) return;
+
+    console.log("🔵 [useEffect open] Modal abierto, llamando startCamera()...");
+    startCamera(); // startCamera tiene su propio lock interno
+
+    // Cleanup solo cuando se cierra el modal
     return () => {
-      mountedRef.current = false;
+      console.log("🔴 [useEffect open] Modal cerrado, limpiando...");
       cleanup();
     };
-  }, [open, startCamera, cleanup]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]); // Solo depender de 'open' para evitar re-iniciar la cámara
 
   if (!open) return null;
 
-  const pct = Math.round(score * 100);
+  const pct = Math.round(score); // score ya está en 0..100
 
   return (
     <div
@@ -737,7 +879,7 @@ function AbecedarioTestModal({
             }}
           >
             <div style={{ padding: 10, borderBottom: "1px solid #1f2937" }}>
-              <strong>Cámara (Detección Real con TensorFlow.js)</strong>
+              <strong>Cámara (Detección con Sistema Heurístico)</strong>
             </div>
 
             <div
@@ -769,6 +911,156 @@ function AbecedarioTestModal({
                   height: "100%",
                 }}
               />
+
+              {/* Overlay para countdown (preparación) */}
+              {heuristicState === "countdown" && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.85)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div style={{ fontSize: 96, fontWeight: 800, marginBottom: 24 }}>
+                    {countdown}
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>
+                    Prepárate...
+                  </div>
+                  <div style={{ fontSize: 14, opacity: 0.8, textAlign: "center", maxWidth: 300 }}>
+                    La captura iniciará cuando llegue a cero.
+                  </div>
+                </div>
+              )}
+
+              {/* Overlay para capturing (capturando seña) */}
+              {heuristicState === "capturing" && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.70)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div style={{ fontSize: 96, fontWeight: 800, color: "#16a34a", marginBottom: 24 }}>
+                    {countdown}
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#16a34a", marginBottom: 12 }}>
+                    ¡Ahora!
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+                    Realiza la seña de <strong>{items[idx]?.label}</strong>
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    Capturando... {capturedFramesRef.current.length} frames
+                  </div>
+                </div>
+              )}
+
+              {/* Overlay para analyzing */}
+              {heuristicState === "analyzing" && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.85)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>
+                    Analizando...
+                  </div>
+                  <div style={{ fontSize: 14, opacity: 0.8 }}>
+                    Comparando con {templatesRef.current.length} plantillas
+                  </div>
+                </div>
+              )}
+
+              {/* Overlay para result */}
+              {heuristicState === "result" && heuristicResult && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.90)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 72,
+                      fontWeight: 800,
+                      color: heuristicResult.decision === "accepted" ? "#16a34a" : "#dc2626",
+                      marginBottom: 24,
+                    }}
+                  >
+                    {heuristicResult.score}%
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>
+                    {heuristicResult.decision === "accepted" ? "✅ ¡Correcto!" : "❌ Incorrecto"}
+                  </div>
+                  <div style={{ fontSize: 14, opacity: 0.8, marginBottom: 24 }}>
+                    {heuristicResult.decision === "accepted"
+                      ? "¡Excelente! Presiona Siguiente para continuar"
+                      : "Intenta de nuevo"}
+                  </div>
+
+                  {/* Botones según el resultado */}
+                  <div style={{ display: "flex", gap: 12 }}>
+                    {heuristicResult.decision === "accepted" ? (
+                      <button
+                        onClick={goToNextLetter}
+                        style={{
+                          padding: "12px 24px",
+                          borderRadius: 8,
+                          background: "#16a34a",
+                          border: "1px solid #15803d",
+                          color: "white",
+                          fontSize: 14,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Siguiente →
+                      </button>
+                    ) : (
+                      <button
+                        onClick={retryHeuristic}
+                        style={{
+                          padding: "12px 24px",
+                          borderRadius: 8,
+                          background: "#2563eb",
+                          border: "1px solid #1e40af",
+                          color: "white",
+                          fontSize: 14,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Intentar de nuevo
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Barra de coincidencia */}
@@ -850,14 +1142,13 @@ function AbecedarioTestModal({
               }}
             >
               <button
-                onClick={() => {
+                onClick={async () => {
                   resetScoreForCurrent();
+                  // Limpiar primero antes de reiniciar
                   cleanup();
-                  // Esperar un momento antes de reiniciar para que la limpieza termine
-                  setTimeout(() => {
-                    mountedRef.current = true;
-                    startCamera();
-                  }, 100);
+                  // Esperar un poco para que se libere la cámara
+                  await new Promise(resolve => setTimeout(resolve, 100));
+                  startCamera();
                 }}
                 title="Reiniciar cámara"
                 style={{
