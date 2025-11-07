@@ -76,6 +76,12 @@ function getSegments(moduleKey: string): Segment[] {
       { key: "S_Z", title: "Segmento 3 (S–Z)", short: "S–Z" },
     ];
   }
+  if (mk === "NUMEROS") {
+    return [
+      { key: "1_5", title: "Segmento 1 (1–5)", short: "1–5" },
+      { key: "6_10", title: "Segmento 2 (6–10)", short: "6–10" },
+    ];
+  }
   return [];
 }
 

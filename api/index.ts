@@ -64,6 +64,7 @@ app.get("/api/stats", requireAuth, wrap(async (req: AuthReq, res) => {
     bestScore: Number(p.mejor_puntaje || 0),
     medal: p.medalla || 'none',
     coinsEarned: p.monedas_ganadas,
+    currentLetterIndex: p.current_letter_index,
   }));
 
   res.json({
@@ -115,16 +116,18 @@ app.get("/api/progreso/:moduleKey", requireAuth, wrap(async (req: AuthReq, res) 
     bestScore: Number(progreso.mejor_puntaje || 0),
     medal: progreso.medalla || 'none',
     coinsEarned: progreso.monedas_ganadas,
+    currentLetterIndex: progreso.current_letter_index,
   });
 }));
 
 // Registrar un intento de práctica
 app.post("/api/intentos", requireAuth, wrap(async (req: AuthReq, res) => {
-  const { moduleKey, senaId, precision, correcta } = req.body as {
+  const { moduleKey, senaId, precision, correcta, currentLetterIndex } = req.body as {
     moduleKey: string;
     senaId?: number;
     precision: number;
     correcta: boolean;
+    currentLetterIndex?: number;
   };
 
   if (!moduleKey || precision === undefined || correcta === undefined) {
@@ -222,19 +225,26 @@ app.post("/api/intentos", requireAuth, wrap(async (req: AuthReq, res) => {
     where: { id_modulo: modulo.id_modulo },
   });
 
-  // Calcular porcentaje de avance (señas únicas correctas / total señas)
-  const senasCorrectasUnicas = await prisma.intentoPractica.groupBy({
-    by: ['id_sena'],
-    where: {
-      id_usuario: usuario.id_usuario,
-      id_modulo: modulo.id_modulo,
-      correcta: true,
-    },
-  });
+  // Calcular porcentaje de avance
+  let porcentajeAvance = 0;
 
-  const porcentajeAvance = totalSenas > 0
-    ? (senasCorrectasUnicas.length / totalSenas) * 100
-    : 0;
+  // Para abecedario, usar currentLetterIndex si está disponible
+  if (moduleKey === 'abecedario' && currentLetterIndex !== undefined) {
+    porcentajeAvance = totalSenas > 0 ? (currentLetterIndex / totalSenas) * 100 : 0;
+  } else {
+    // Para otros módulos, contar señas únicas correctas
+    const senasCorrectasUnicas = await prisma.intentoPractica.groupBy({
+      by: ['id_sena'],
+      where: {
+        id_usuario: usuario.id_usuario,
+        id_modulo: modulo.id_modulo,
+        correcta: true,
+      },
+    });
+    porcentajeAvance = totalSenas > 0
+      ? (senasCorrectasUnicas.length / totalSenas) * 100
+      : 0;
+  }
 
   // Calcular promedio de precisión
   const intentosConPrecision = await prisma.intentoPractica.findMany({
@@ -278,6 +288,7 @@ app.post("/api/intentos", requireAuth, wrap(async (req: AuthReq, res) => {
       medalla: medalla,
       estado: estado,
       fecha_actualizacion: new Date(),
+      ...(currentLetterIndex !== undefined && { current_letter_index: currentLetterIndex }),
     },
   });
 

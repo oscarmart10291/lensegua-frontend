@@ -27,6 +27,7 @@ export type ModuleProgress = {
   bestScore: number;
   medal: 'none' | 'bronze' | 'silver' | 'gold';
   coinsEarned: number;
+  currentLetterIndex?: number; // Para abecedario: índice de la letra actual
 };
 
 export type UserStats = {
@@ -113,12 +114,14 @@ export async function getModuleProgress(moduleKey: string): Promise<ModuleProgre
  * @param precision - Nivel de precisión (0-100)
  * @param correcta - Si el intento fue correcto
  * @param senaId - ID de la seña (opcional)
+ * @param currentLetterIndex - Índice actual de la letra (para abecedario)
  */
 export async function registrarIntento(
   moduleKey: string,
   precision: number,
   correcta: boolean,
-  senaId?: number
+  senaId?: number,
+  currentLetterIndex?: number
 ): Promise<IntentoResponse> {
   const res = await authFetch("/api/intentos", {
     method: "POST",
@@ -127,6 +130,7 @@ export async function registrarIntento(
       precision,
       correcta,
       senaId,
+      currentLetterIndex,
     }),
   });
 

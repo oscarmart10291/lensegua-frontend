@@ -40,6 +40,12 @@ const SEGMENT_TO_PREFIX: Record<"A_I" | "J_R" | "S_Z", string> = {
   S_Z: `${BASE}/S_Z`,
 };
 
+const BASE_NUMEROS = "modules/NUMEROS";
+const NUMEROS_SEGMENT_TO_PREFIX: Record<"1_5" | "6_10", string> = {
+  "1_5": `${BASE_NUMEROS}/1-5`,
+  "6_10": `${BASE_NUMEROS}/6-10`,
+};
+
 const cleanPrefix = (p: string) =>
   p.replace(/^\/+/, "").replace(/\/+$/, "") + "/";
 
@@ -167,6 +173,44 @@ export async function getAbecedarioUrls(
     // label desde el nombre sin extensión (A, B, C...)
     const base = f.name.replace(/\.[^.]+$/, "");
     const label = base.toUpperCase();
+
+    // deduce tipo
+    const byCT = kindFromContentType(f.contentType);
+    const kind =
+      byCT ||
+      (isVideoByExt(f.url)
+        ? "video"
+        : isImageByExt(f.url)
+        ? "image"
+        : undefined);
+
+    return {
+      label,
+      url: f.url,
+      kind,
+      name: f.name,
+    };
+  });
+
+  items.sort((a, b) =>
+    a.label.localeCompare(b.label, "es", { numeric: true })
+  );
+
+  return items;
+}
+
+// ========= API específica para NÚMEROS (usada por LessonMedia) =========
+export async function getNumerosUrls(
+  segment: "1_5" | "6_10"
+): Promise<AbcMediaItem[]> {
+  const prefix = NUMEROS_SEGMENT_TO_PREFIX[segment];
+
+  const files = await listFilesUnder(prefix);
+
+  const items: AbcMediaItem[] = files.map((f) => {
+    // label desde el nombre sin extensión (1, 2, 3...)
+    const base = f.name.replace(/\.[^.]+$/, "");
+    const label = base;
 
     // deduce tipo
     const byCT = kindFromContentType(f.contentType);
