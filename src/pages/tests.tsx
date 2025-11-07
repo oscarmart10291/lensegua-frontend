@@ -139,6 +139,8 @@ function AbecedarioTestModal({
   const rafRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const lastInferAtRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
   // Modelo de TensorFlow
   const modelRef = useRef<tf.LayersModel | null>(null);
@@ -247,16 +249,38 @@ function AbecedarioTestModal({
   // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
     try {
+      // Crear un nuevo AbortController para esta sesión de cámara
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
+
+      // Verificar si el componente está montado antes de proceder
+      if (!mountedRef.current) return;
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false,
       });
+
+      // Verificar nuevamente después de la operación async
+      if (!mountedRef.current || signal.aborted) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
       streamRef.current = stream;
 
-      if (videoRef.current) {
+      if (videoRef.current && mountedRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn("Error al reproducir video:", playErr);
+          if (!mountedRef.current) return;
+        }
       }
+
+      // Verificar nuevamente antes de inicializar MediaPipe
+      if (!mountedRef.current || signal.aborted) return;
 
       const hands = new Hands({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
@@ -270,6 +294,8 @@ function AbecedarioTestModal({
       });
 
       hands.onResults((results: Results) => {
+        if (!mountedRef.current) return;
+
         const canvasEl = canvasRef.current;
         const videoEl = videoRef.current;
         if (!canvasEl || !videoEl) return;
@@ -312,20 +338,38 @@ function AbecedarioTestModal({
         }
       });
 
+      if (!mountedRef.current || signal.aborted) {
+        hands.close();
+        return;
+      }
+
       handsRef.current = hands;
 
       // Bucle de envío de frames
       const processFrame = async () => {
-        if (!videoRef.current || !handsRef.current || sendingRef.current) return;
+        if (!mountedRef.current || !videoRef.current || !handsRef.current || sendingRef.current) return;
         sendingRef.current = true;
-        await handsRef.current.send({ image: videoRef.current as any });
+        try {
+          await handsRef.current.send({ image: videoRef.current as any });
+        } catch (err) {
+          console.warn("Error al enviar frame:", err);
+        }
         sendingRef.current = false;
-        rafRef.current = requestAnimationFrame(processFrame);
+        if (mountedRef.current) {
+          rafRef.current = requestAnimationFrame(processFrame);
+        }
       };
       rafRef.current = requestAnimationFrame(processFrame);
-    } catch (err) {
-      console.error(err);
-      alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
+    } catch (err: any) {
+      // Ignorar errores de abort, que son esperados cuando se cierra el modal
+      if (err.name === "AbortError" || err.message?.includes("aborted")) {
+        console.log("Inicialización de cámara cancelada (esperado)");
+        return;
+      }
+      console.error("❌ Error en startCamera:", err);
+      if (mountedRef.current) {
+        alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
+      }
     }
   }, []);
 
@@ -436,6 +480,12 @@ function AbecedarioTestModal({
 
   // Limpieza
   const cleanup = useCallback(() => {
+    // Abortar cualquier inicialización de cámara en progreso
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
 
@@ -456,9 +506,18 @@ function AbecedarioTestModal({
   }, []);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      mountedRef.current = false;
+      return;
+    }
+
+    mountedRef.current = true;
     startCamera();
-    return () => cleanup();
+
+    return () => {
+      mountedRef.current = false;
+      cleanup();
+    };
   }, [open, startCamera, cleanup]);
 
   if (!open) return null;
@@ -768,7 +827,12 @@ function AbecedarioTestModal({
               <button
                 onClick={() => {
                   resetScoreForCurrent();
-                  startCamera();
+                  cleanup();
+                  // Esperar un momento antes de reiniciar para que la limpieza termine
+                  setTimeout(() => {
+                    mountedRef.current = true;
+                    startCamera();
+                  }, 100);
                 }}
                 title="Reiniciar cámara"
                 style={{
