@@ -523,9 +523,16 @@ function AbecedarioTestModal({
 
   useEffect(() => {
     if (!open) return;
+
+    // Solo iniciar cámara cuando se abre el modal
     startCamera();
-    return () => cleanup();
-  }, [open, startCamera, cleanup]);
+
+    // Cleanup solo cuando se cierra el modal
+    return () => {
+      cleanup();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]); // Solo depender de 'open' para evitar re-iniciar la cámara
 
   if (!open) return null;
 
@@ -962,8 +969,12 @@ function AbecedarioTestModal({
               }}
             >
               <button
-                onClick={() => {
+                onClick={async () => {
                   resetScoreForCurrent();
+                  // Limpiar primero antes de reiniciar
+                  cleanup();
+                  // Esperar un poco para que se libere la cámara
+                  await new Promise(resolve => setTimeout(resolve, 100));
                   startCamera();
                 }}
                 title="Reiniciar cámara"
