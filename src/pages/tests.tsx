@@ -431,15 +431,13 @@ function AbecedarioTestModal({
   const startCamera = useCallback(async () => {
     console.log(`🔍 [startCamera llamada] cameraInitializing=${cameraInitializingRef.current}, cameraReady=${cameraReadyRef.current}`);
 
-    // Evitar múltiples inicializaciones - CHECK ANTES DE TODO
-    if (cameraInitializingRef.current || cameraReadyRef.current) {
-      console.log("⚠️ Cámara ya está inicializándose o ya está lista, ignorando llamada");
+    // Verificación secundaria (el useEffect ya pone el flag)
+    if (cameraReadyRef.current) {
+      console.log("⚠️ Cámara ya está lista, ignorando llamada");
       return;
     }
 
-    // INMEDIATAMENTE poner flag, no esperar async
-    cameraInitializingRef.current = true;
-    console.log("🎥 [startCamera] Flag puesto, iniciando proceso de inicialización...");
+    console.log("🎥 [startCamera] Iniciando proceso de inicialización...");
 
     try {
       console.log("📷 Solicitando acceso a cámara...");
@@ -527,10 +525,11 @@ function AbecedarioTestModal({
 
       // Marcar cámara como lista
       cameraReadyRef.current = true;
-      cameraInitializingRef.current = false;
+      cameraInitializingRef.current = false; // Ya terminó de inicializar
       console.log("✅✅✅ Cámara COMPLETAMENTE inicializada y lista para usar ✅✅✅");
     } catch (err) {
       console.error("❌ Error en startCamera:", err);
+      // IMPORTANTE: Resetear flags en caso de error para permitir retry
       cameraReadyRef.current = false;
       cameraInitializingRef.current = false;
       alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
@@ -585,9 +584,13 @@ function AbecedarioTestModal({
     console.log("🔵 [useEffect open] Modal abierto");
     console.log(`🔍 Flags actuales: cameraInitializing=${cameraInitializingRef.current}, cameraReady=${cameraReadyRef.current}`);
 
-    // Doble protección: verificar flags antes de llamar startCamera
+    // Doble protección: verificar flags Y PONERLO INMEDIATAMENTE antes de llamar
     if (!cameraInitializingRef.current && !cameraReadyRef.current) {
-      console.log("✅ Flags libres, llamando startCamera()...");
+      console.log("✅ Flags libres");
+      // CRÍTICO: Poner flag AQUÍ, ANTES de llamar startCamera (que es async)
+      cameraInitializingRef.current = true;
+      console.log("🔒 Flag cameraInitializing puesto a TRUE en useEffect");
+      console.log("📞 Llamando startCamera()...");
       startCamera();
     } else {
       console.log("⚠️ [useEffect] Cámara ya está en proceso o lista, NO llamando startCamera()");
