@@ -708,7 +708,8 @@ function AbecedarioTestModal({
       console.log("🔴 [useEffect open] Modal cerrado, limpiando...");
       cleanup();
     };
-  }, [open, startCamera, cleanup]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]); // Solo depender de 'open' para evitar re-ejecuciones innecesarias
 
   if (!open) return null;
 
