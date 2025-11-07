@@ -1178,39 +1178,7 @@ function AbecedarioTestModal({
               )}
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                gap: 8,
-                padding: 10,
-                borderTop: "1px solid #1f2937",
-              }}
-            >
-              <button
-                onClick={async () => {
-                  resetScoreForCurrent();
-                  // Limpiar primero antes de reiniciar
-                  cleanup();
-                  // Esperar un poco para que se libere la cámara
-                  await new Promise(resolve => setTimeout(resolve, 100));
-                  startCamera();
-                }}
-                title="Reiniciar cámara"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  background: "#111827",
-                  border: "1px solid #1f2937",
-                  color: "#e5e7eb",
-                  cursor: "pointer",
-                }}
-              >
-                <Camera size={16} /> Reiniciar cámara
-              </button>
-            </div>
+            {/* Controles eliminados - la cámara funciona continuamente */}
           </div>
         </div>
 
