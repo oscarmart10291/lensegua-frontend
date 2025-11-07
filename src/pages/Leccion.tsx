@@ -82,6 +82,11 @@ function getSegments(moduleKey: string): Segment[] {
       { key: "6_10", title: "Segmento 2 (6–10)", short: "6–10" },
     ];
   }
+  if (mk === "FRASES_SALUDOS") {
+    return [
+      { key: "TODOS", title: "Saludos y Frases", short: "Todos" },
+    ];
+  }
   return [];
 }
 

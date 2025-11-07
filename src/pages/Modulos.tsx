@@ -30,9 +30,7 @@ const LESSONS_BY_MODULE: Record<string, Lesson[]> = {
     { key: "6_10", title: "Números 6–10" },
   ],
   FRASES_SALUDOS: [
-    { key: "HOLA", title: "Hola" },
-    { key: "ADIOS", title: "Adiós" },
-    { key: "GRACIAS", title: "Gracias" },
+    { key: "TODOS", title: "Saludos y Frases" },
   ],
   DIAS_SEMANA: [
     { key: "LUNES", title: "Lunes" },

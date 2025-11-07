@@ -100,9 +100,41 @@ function numerosContent(lessonKey: string): LessonContent | null {
   return null;
 }
 
+// ----- Contenido SALUDOS -----
+function saludosContent(lessonKey: string): LessonContent | null {
+  if (lessonKey === 'TODOS') {
+    return {
+      moduleTitle: 'Frases/Saludos',
+      lessonTitle: 'Saludos y Frases Comunes',
+      blocks: [
+        { type: 'text', title: 'Objetivo', body: 'Aprender las señas de saludos y frases comunes en LENSEGUA.' },
+        {
+          type: 'imageGrid',
+          title: 'Saludos',
+          items: [
+            { label: 'HOLA' },
+            { label: 'ADIOS' },
+            { label: 'BIENVENIDO' },
+            { label: 'GRACIAS' },
+            { label: 'DE NADA' },
+            { label: 'DISCULPA' },
+            { label: 'COMO ESTAS' },
+            { label: 'BUENA TARDE' },
+            { label: 'BUENAS NOCHES' },
+            { label: 'APLAUSOS' },
+          ]
+        },
+        { type: 'callout', kind: 'tip', body: 'Consejo: las expresiones faciales son muy importantes en las señas de saludos y emociones.' },
+      ],
+    };
+  }
+  return null;
+}
+
 export function getLessonContent(moduleKey: string, lessonKey: string): LessonContent | null {
   const mk = moduleKey.toUpperCase();
   if (mk === 'ABECEDARIO') return abecedarioContent(lessonKey);
   if (mk === 'NUMEROS') return numerosContent(lessonKey);
+  if (mk === 'FRASES_SALUDOS') return saludosContent(lessonKey);
   return null;
 }

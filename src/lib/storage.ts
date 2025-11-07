@@ -237,6 +237,44 @@ export async function getNumerosUrls(
   return items;
 }
 
+// ========= API específica para SALUDOS (usada por LessonMedia) =========
+export async function getSaludosUrls(): Promise<AbcMediaItem[]> {
+  const prefix = "modules/SALUDOS";
+
+  const files = await listFilesUnder(prefix);
+
+  const items: AbcMediaItem[] = files.map((f) => {
+    // label desde el nombre sin extensión (HOLA, ADIOS, GRACIAS...)
+    const base = f.name.replace(/\.[^.]+$/, "");
+    // Convertir de SNAKE_CASE a formato legible
+    const label = base.replace(/_/g, " ");
+
+    // deduce tipo
+    const byCT = kindFromContentType(f.contentType);
+    const kind =
+      byCT ||
+      (isVideoByExt(f.url)
+        ? "video"
+        : isImageByExt(f.url)
+        ? "image"
+        : undefined);
+
+    return {
+      label,
+      url: f.url,
+      kind,
+      name: f.name,
+    };
+  });
+
+  // Ordenar alfabéticamente por label
+  items.sort((a, b) =>
+    a.label.localeCompare(b.label, "es")
+  );
+
+  return items;
+}
+
 // ========= NUEVO: helpers compatibles para Tests =========
 
 /** Mapea StorageItem[] → AbcMediaItem[] */

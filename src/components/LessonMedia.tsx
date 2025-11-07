@@ -1,6 +1,6 @@
 // src/components/LessonMedia.tsx
 import React, { useEffect, useState } from "react";
-import { getAbecedarioUrls, getNumerosUrls, AbcMediaItem } from "../lib/storage";
+import { getAbecedarioUrls, getNumerosUrls, getSaludosUrls, AbcMediaItem } from "../lib/storage";
 
 type Props = {
   moduleKey: string;
@@ -41,6 +41,9 @@ export default function LessonMedia({
         } else if (mk === "NUMEROS") {
           const seg = lk as "1_5" | "6_10";
           const data = await getNumerosUrls(seg);
+          if (alive) setItems(data);
+        } else if (mk === "FRASES_SALUDOS") {
+          const data = await getSaludosUrls();
           if (alive) setItems(data);
         } else {
           if (alive) setItems([]);
@@ -150,7 +153,7 @@ export default function LessonMedia({
               <div style={{ padding: 12, display: "grid", gap: 8 }}>
                 {it.note && <p style={{ margin: 0, color: "#475569" }}>{it.note}</p>}
 
-                {moduleKey.toUpperCase() === "NUMEROS" ? (
+                {(moduleKey.toUpperCase() === "NUMEROS" || moduleKey.toUpperCase() === "FRASES_SALUDOS") ? (
                   <button
                     type="button"
                     disabled
