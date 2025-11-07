@@ -22,21 +22,25 @@ import { getAbecedarioMaybe as getAbecedarioUrls, AbcMediaItem } from "../lib/st
 
 // 👇 MediaPipe Hands
 import { Hands, HAND_CONNECTIONS, Results } from "@mediapipe/hands";
-import { drawConnectors, drawLandmarks } from "@mediapipe/drawing_utils";
+import { drawConnectors } from "@mediapipe/drawing_utils";
+
+// 👇 TensorFlow.js para detección real
+import * as tf from "@tensorflow/tfjs";
 
 // 👇 API para progreso y monedas
-import { getUserStats, registrarIntento, UserStats, ModuleProgress as APIModuleProgress } from "../lib/api";
+import { getUserStats, registrarIntento, UserStats } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 
 type MedalTier = "none" | "bronze" | "silver" | "gold";
+type MPPoint = { x: number; y: number; z?: number };
 
 export type ModuleProgress = {
   id: string;
   name: string;
   subtitle: string;
-  progress: number;   // 0 - 100
+  progress: number;
   attempts: number;
-  bestScore: number;  // 0 - 100
+  bestScore: number;
   locked?: boolean;
   medal: MedalTier;
   coinsEarned: number;
@@ -51,7 +55,62 @@ function medalLabel(tier: MedalTier) {
   }
 }
 
-const MAX_ITEMS = 21; // mostramos hasta 21 imágenes
+// =============== Configuración para detección ===============
+const CFG = {
+  MIRROR_X: true,
+  USE_Z_BY_F: (F: number) => F === 63,
+  SMOOTH_EMA: 0.5,
+  MIN_CONFIDENCE: 0.60, // 60% mínimo para marcar como correcta
+  DECAY_NOT_CONFIDENT: 0.90,
+  MODEL_URL: "/models/estatico_last/model.json",
+};
+
+const MAX_ITEMS = 26; // todas las letras A-Z
+
+// =============== Helper para convertir landmarks a vector ===============
+function landmarksToVector(hand: MPPoint[], F: number): Float32Array {
+  const expectZ = CFG.USE_Z_BY_F(F);
+
+  let pts = hand.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0 }));
+  if (CFG.MIRROR_X) for (const p of pts) p.x = 1 - p.x;
+
+  // Origen en muñeca
+  const wrist = pts[0];
+  for (const p of pts) {
+    p.x -= wrist.x;
+    p.y -= wrist.y;
+    p.z -= wrist.z;
+  }
+
+  // Escala bbox
+  let minX = +Infinity,
+    minY = +Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const scale = Math.max(1e-6, Math.hypot(maxX - minX, maxY - minY));
+  for (const p of pts) {
+    p.x /= scale;
+    p.y /= scale;
+    p.z /= scale;
+  }
+
+  const out: number[] = [];
+  for (const p of pts) {
+    out.push(p.x, p.y);
+    if (expectZ) out.push(p.z);
+  }
+
+  if (out.length < F) while (out.length < F) out.push(0);
+  else if (out.length > F) out.length = F;
+
+  return new Float32Array(out);
+}
 
 // =============== Modal interno para el Test Abecedario ===============
 function AbecedarioTestModal({
@@ -67,17 +126,29 @@ function AbecedarioTestModal({
   const [loading, setLoading] = useState(true);
   const [idx, setIdx] = useState(0);
 
-  // ---- Simulador de coincidencia (prototipo) ----
-  const [match, setMatch] = useState(0);            // 0..100
-  const [correct, setCorrect] = useState(false);    // bandera de "✔ Correcto"
-  const targetRef = useRef<number>(80);             // objetivo aleatorio ≥ 61
-  const autoNextRef = useRef<number | null>(null);  // timeout para avanzar
+  // Estado de detección
+  const [score, setScore] = useState(0); // 0..1
+  const [correct, setCorrect] = useState(false);
+  const autoNextRef = useRef<number | null>(null);
 
+  // Refs para cámara y MediaPipe
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const handsRef = useRef<Hands | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
+  const sendingRef = useRef(false);
+  const lastInferAtRef = useRef(0);
+
+  // Modelo de TensorFlow
+  const modelRef = useRef<tf.LayersModel | null>(null);
+  const [inputKind, setInputKind] = useState<"vector" | "sequence" | null>(null);
+  const [vecLen, setVecLen] = useState<number | null>(null);
+  const [seqShape, setSeqShape] = useState<{ T: number; F: number } | null>(null);
+  const seqBufferRef = useRef<number[][]>([]);
+
+  // Mapeo de clases
+  const [classIndex, setClassIndex] = useState<Record<string, number> | null>(null);
 
   // Cargar imágenes del abecedario desde Firebase
   useEffect(() => {
@@ -90,10 +161,8 @@ function AbecedarioTestModal({
       .then((arr) => {
         if (!mounted) return;
         const onlyImages = arr.filter(
-          (it) =>
-            (it.kind ? it.kind === "image" : /\.(png|jpe?g|webp|gif)(\?|$)/i.test(it.url))
+          (it) => (it.kind ? it.kind === "image" : /\.(png|jpe?g|webp|gif)(\?|$)/i.test(it.url))
         );
-        // Limitar a 21
         setItems(onlyImages.slice(0, MAX_ITEMS));
         setIdx(0);
       })
@@ -105,11 +174,9 @@ function AbecedarioTestModal({
     };
   }, [open]);
 
-  // Reinicia el objetivo y la barra cuando cambia de imagen
-  const resetMatchForCurrent = useCallback(() => {
-    const target = Math.floor(61 + Math.random() * 38); // 61..98
-    targetRef.current = target;
-    setMatch(0);
+  // Reiniciar score al cambiar de letra
+  const resetScoreForCurrent = useCallback(() => {
+    setScore(0);
     setCorrect(false);
     if (autoNextRef.current) {
       window.clearTimeout(autoNextRef.current);
@@ -119,10 +186,65 @@ function AbecedarioTestModal({
 
   useEffect(() => {
     if (!open) return;
-    resetMatchForCurrent();
-  }, [open, idx, resetMatchForCurrent]);
+    resetScoreForCurrent();
+  }, [open, idx, resetScoreForCurrent]);
 
-  // Inicializar MediaPipe + cámara
+  // Cargar modelo de TensorFlow
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+
+    (async () => {
+      try {
+        await tf.ready();
+        const m = await tf.loadLayersModel(CFG.MODEL_URL);
+        if (!active) return;
+        modelRef.current = m;
+
+        const inShape = m.inputs[0].shape as (number | null)[];
+        if (inShape.length === 2) {
+          setInputKind("vector");
+          setVecLen(Number(inShape[1]));
+        } else if (inShape.length === 3) {
+          setInputKind("sequence");
+          setSeqShape({ T: Number(inShape[1]), F: Number(inShape[2]) });
+        }
+
+        console.log("✅ Modelo cargado:", CFG.MODEL_URL);
+      } catch (err) {
+        console.error("❌ Error al cargar modelo:", err);
+      }
+    })();
+
+    return () => {
+      active = false;
+      modelRef.current = null;
+    };
+  }, [open]);
+
+  // Cargar mapeo de clases
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const base = CFG.MODEL_URL.replace(/\/model\.json$/i, "");
+        const resp = await fetch(`${base}/class_index.json`, { cache: "no-store" });
+        const fromFile = resp.ok ? await resp.json() : null;
+        if (cancelled) return;
+        if (fromFile) setClassIndex(fromFile);
+      } catch (err) {
+        console.warn("⚠️ No se pudo cargar class_index.json:", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -140,6 +262,7 @@ function AbecedarioTestModal({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
       });
       hands.setOptions({
+        selfieMode: true,
         maxNumHands: 1,
         modelComplexity: 1,
         minDetectionConfidence: 0.6,
@@ -154,84 +277,49 @@ function AbecedarioTestModal({
         const ctx = canvasEl.getContext("2d");
         if (!ctx) return;
 
-        // Ajustar tamaño del canvas al del video
         canvasEl.width = videoEl.videoWidth || 1280;
         canvasEl.height = videoEl.videoHeight || 720;
 
-        // Limpiar y dibujar frame
         ctx.save();
         ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
         ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
 
-        const hasHand =
-          !!results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
-
-        // Dibujar landmarks
-        if (hasHand) {
-          for (const landmarks of results.multiHandLandmarks) {
-            drawConnectors(ctx as any, landmarks, HAND_CONNECTIONS, { lineWidth: 2 });
-            drawLandmarks(ctx as any, landmarks, { lineWidth: 1, radius: 3 });
+        const hand = results.multiHandLandmarks?.[0];
+        if (hand) {
+          drawConnectors(ctx as any, hand as any, HAND_CONNECTIONS, {
+            lineWidth: 2,
+            color: "#ffffff",
+          });
+          ctx.fillStyle = "#22c55e";
+          ctx.strokeStyle = "#065f46";
+          ctx.lineWidth = 1.5;
+          const R = Math.max(2.5, Math.min(canvasEl.width, canvasEl.height) * 0.006);
+          for (const p of hand) {
+            const x = p.x * canvasEl.width;
+            const y = p.y * canvasEl.height;
+            ctx.beginPath();
+            ctx.arc(x, y, R, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
           }
         }
         ctx.restore();
 
-        // ---------- Simulación de coincidencia ----------
-        if (hasHand && !correct) {
-          // Incremento suave hacia el objetivo
-          setMatch((prev) => {
-            const target = targetRef.current;
-            const step = 5; // velocidad de subida
-            const next = Math.min(prev + step, target);
-            if (next >= target && !correct) {
-              // Marcamos correcto y pasamos a la siguiente
-              setCorrect(true);
-
-              // 🎯 Registrar intento en la base de datos
-              registrarIntento('abecedario', next, true)
-                .then((response) => {
-                  console.log('✅ Intento registrado:', response);
-                  if (response.coinEarned) {
-                    console.log('🪙 +1 moneda ganada!');
-                  }
-                  // Actualizar progreso en la UI principal
-                  if (onProgressUpdate) {
-                    onProgressUpdate();
-                  }
-                })
-                .catch((err) => {
-                  console.error('❌ Error al registrar intento:', err);
-                });
-
-              if (!autoNextRef.current) {
-                autoNextRef.current = window.setTimeout(() => {
-                  autoNextRef.current = null;
-                  setCorrect(false);
-                  // avanzar
-                  setIdx((p) => {
-                    const nextIdx = p + 1;
-                    if (nextIdx >= (items.length || 0)) {
-                      alert("¡Test finalizado! ✅");
-                      return p; // ya no avanzamos
-                    }
-                    return nextIdx;
-                  });
-                }, 800); // pequeña pausa para mostrar el check
-              }
-            }
-            return next;
-          });
-        } else if (!hasHand && !correct) {
-          // sin mano, tendemos a bajar lentamente (opcional)
-          setMatch((prev) => Math.max(0, prev - 1));
+        const now = performance.now();
+        if (now - lastInferAtRef.current > 225) {
+          lastInferAtRef.current = now;
+          inferScore(results);
         }
       });
 
       handsRef.current = hands;
 
-      // Bucle de envío de frames al modelo
+      // Bucle de envío de frames
       const processFrame = async () => {
-        if (!videoRef.current || !handsRef.current) return;
+        if (!videoRef.current || !handsRef.current || sendingRef.current) return;
+        sendingRef.current = true;
         await handsRef.current.send({ image: videoRef.current as any });
+        sendingRef.current = false;
         rafRef.current = requestAnimationFrame(processFrame);
       };
       rafRef.current = requestAnimationFrame(processFrame);
@@ -239,9 +327,114 @@ function AbecedarioTestModal({
       console.error(err);
       alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
     }
-  }, [correct, items.length]);
+  }, []);
 
-  // Limpieza (detener cámara/RAF/timeout) al cerrar/desmontar
+  // Inferencia con el modelo
+  const inferScore = async (results: Results) => {
+    const model = modelRef.current;
+    if (!model || !inputKind) return;
+
+    const hand = results.multiHandLandmarks?.[0];
+    if (!hand) {
+      setScore((prev) => prev * CFG.DECAY_NOT_CONFIDENT);
+      return;
+    }
+
+    const currentLabel = items[idx]?.label;
+    if (!currentLabel || !classIndex) {
+      setScore((prev) => prev * CFG.DECAY_NOT_CONFIDENT);
+      return;
+    }
+
+    const mappedIdx = classIndex[currentLabel];
+    if (typeof mappedIdx !== "number") {
+      setScore((prev) => prev * CFG.DECAY_NOT_CONFIDENT);
+      return;
+    }
+
+    try {
+      let probsArr: Float32Array | number[] | null = null;
+
+      if (inputKind === "vector" && vecLen) {
+        const frameVec = landmarksToVector(hand as MPPoint[], vecLen);
+        probsArr = await tf.tidy(() => {
+          const x = tf.tensor(frameVec, [1, vecLen]);
+          const out = model.predict(x) as tf.Tensor;
+          const soft = tf.softmax(out);
+          return soft.dataSync();
+        });
+      } else if (inputKind === "sequence" && seqShape) {
+        const { T, F } = seqShape;
+        const frameVec = landmarksToVector(hand as MPPoint[], F);
+        const buf = seqBufferRef.current;
+        buf.push(Array.from(frameVec));
+        if (buf.length > T) buf.shift();
+        const pad = Array.from({ length: Math.max(0, T - buf.length) }, () =>
+          new Array(F).fill(0)
+        );
+        const win = pad.concat(buf);
+        probsArr = await tf.tidy(() => {
+          const x = tf.tensor(win, [1, T, F]);
+          const out = model.predict(x) as tf.Tensor;
+          const soft = tf.softmax(out);
+          return soft.dataSync();
+        });
+      }
+
+      if (!probsArr) return;
+
+      const labelProb = probsArr[mappedIdx] ?? 0;
+
+      // Actualizar score con EMA
+      setScore((prev) => {
+        const ema = prev * CFG.SMOOTH_EMA + labelProb * (1 - CFG.SMOOTH_EMA);
+        const newScore = labelProb > 0 ? ema : ema * CFG.DECAY_NOT_CONFIDENT;
+
+        // Si alcanza el umbral y no está marcado como correcto
+        if (newScore >= CFG.MIN_CONFIDENCE && !correct) {
+          setCorrect(true);
+
+          // Registrar intento en la base de datos
+          const precision = Math.round(newScore * 100);
+          registrarIntento("abecedario", precision, true)
+            .then((response) => {
+              console.log("✅ Intento registrado:", response);
+              if (response.coinEarned) {
+                console.log("🪙 +1 moneda ganada!");
+              }
+              if (onProgressUpdate) {
+                onProgressUpdate();
+              }
+            })
+            .catch((err) => {
+              console.error("❌ Error al registrar intento:", err);
+            });
+
+          // Auto-avanzar a la siguiente letra
+          if (!autoNextRef.current) {
+            autoNextRef.current = window.setTimeout(() => {
+              autoNextRef.current = null;
+              setCorrect(false);
+              setIdx((p) => {
+                const nextIdx = p + 1;
+                if (nextIdx >= items.length) {
+                  alert("¡Test finalizado! ✅");
+                  return p;
+                }
+                return nextIdx;
+              });
+            }, 1200);
+          }
+        }
+
+        return newScore;
+      });
+    } catch (err) {
+      console.error("Error en inferencia:", err);
+    }
+  };
+
+  // Limpieza
   const cleanup = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
@@ -270,7 +463,7 @@ function AbecedarioTestModal({
 
   if (!open) return null;
 
-  const pct = Math.round(match);
+  const pct = Math.round(score * 100);
 
   return (
     <div
@@ -312,7 +505,9 @@ function AbecedarioTestModal({
           }}
         >
           <Camera size={18} />
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Prueba: Abecedario</h3>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>
+            Prueba: Abecedario (Detección Real)
+          </h3>
           <div style={{ marginLeft: "auto" }}>
             <button
               onClick={() => {
@@ -387,7 +582,7 @@ function AbecedarioTestModal({
               )}
             </div>
 
-            {/* Controles de navegación manual (opcional) */}
+            {/* Controles de navegación manual */}
             <div
               style={{
                 display: "flex",
@@ -436,9 +631,7 @@ function AbecedarioTestModal({
                   border: "1px solid #1e40af",
                   color: "white",
                   cursor:
-                    items.length === 0 || idx === items.length - 1
-                      ? "not-allowed"
-                      : "pointer",
+                    items.length === 0 || idx === items.length - 1 ? "not-allowed" : "pointer",
                 }}
               >
                 Siguiente <Right size={16} />
@@ -460,7 +653,7 @@ function AbecedarioTestModal({
             }}
           >
             <div style={{ padding: 10, borderBottom: "1px solid #1f2937" }}>
-              <strong>Cámara (MediaPipe Hands)</strong>
+              <strong>Cámara (Detección Real con TensorFlow.js)</strong>
             </div>
 
             <div
@@ -559,7 +752,7 @@ function AbecedarioTestModal({
                 </span>
               ) : (
                 <span style={{ fontSize: 12, opacity: 0.7, whiteSpace: "nowrap" }}>
-                  Objetivo: {targetRef.current}%
+                  Mínimo: 60%
                 </span>
               )}
             </div>
@@ -574,8 +767,7 @@ function AbecedarioTestModal({
             >
               <button
                 onClick={() => {
-                  // Reiniciar cámara y también la simulación
-                  resetMatchForCurrent();
+                  resetScoreForCurrent();
                   startCamera();
                 }}
                 title="Reiniciar cámara"
@@ -597,7 +789,7 @@ function AbecedarioTestModal({
           </div>
         </div>
 
-        {/* Responsive: grid -> columnas en pantallas pequeñas */}
+        {/* Responsive */}
         <style>{`
           @media (max-width: 900px) {
             [role="dialog"] > div > div:nth-child(2) {
@@ -626,8 +818,7 @@ export default function TestsPage() {
       const data = await getUserStats();
       setStats(data);
     } catch (error) {
-      console.error('Error al cargar estadísticas:', error);
-      // Inicializar con valores por defecto si hay error
+      console.error("Error al cargar estadísticas:", error);
       setStats({
         totalCoins: 0,
         completed: 0,
@@ -646,7 +837,6 @@ export default function TestsPage() {
   // Construir módulos combinando MODULES con el progreso de la API
   const modules: ModuleProgress[] = useMemo(() => {
     if (!stats) {
-      // Si no hay stats, retornar módulos en cero
       return MODULES.map((m) => ({
         id: m.key,
         name: m.title,
@@ -660,7 +850,6 @@ export default function TestsPage() {
       }));
     }
 
-    // Combinar información de MODULES con progreso de la API
     return MODULES.map((m) => {
       const apiProgress = stats.modules.find((mp) => mp.id === m.key);
       return {
@@ -678,7 +867,8 @@ export default function TestsPage() {
   }, [stats]);
 
   const onAction = (m: ModuleProgress) => {
-    const isAbc = m.id.toLowerCase() === "abecedario" || m.name.toLowerCase() === "abecedario";
+    const isAbc =
+      m.id.toLowerCase() === "abecedario" || m.name.toLowerCase() === "abecedario";
     if (isAbc) {
       setShowAbcModal(true);
     } else {
@@ -686,19 +876,20 @@ export default function TestsPage() {
     }
   };
 
-  // Mostrar loading mientras se cargan los datos
   if (loading) {
     return (
       <>
         <Navbar />
         <main className={`${s.wrapper} ${s.withNavbar}`}>
-          <div style={{
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            minHeight: '60vh',
-            color: '#e5e7eb'
-          }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              minHeight: "60vh",
+              color: "#e5e7eb",
+            }}
+          >
             <p>Cargando estadísticas...</p>
           </div>
         </main>
@@ -714,13 +905,16 @@ export default function TestsPage() {
           <div className={s.headerTop}>
             <h1 className={s.title}>Resultados y Tests</h1>
             <p className={s.subtitle}>
-              Revisa tu progreso por módulo, gana <strong>monedas</strong> y obtén <strong>medallas</strong> al completar.
+              Revisa tu progreso por módulo, gana <strong>monedas</strong> y obtén{" "}
+              <strong>medallas</strong> al completar.
             </p>
           </div>
 
           <div className={s.statsRow} role="region" aria-label="Estadísticas de progreso">
             <div className={s.statCard}>
-              <div className={s.statIconWrap}><Coins aria-hidden /></div>
+              <div className={s.statIconWrap}>
+                <Coins aria-hidden />
+              </div>
               <div className={s.statMeta}>
                 <span className={s.statLabel}>Monedas</span>
                 <span className={s.statValue}>{stats?.totalCoins || 0}</span>
@@ -728,7 +922,9 @@ export default function TestsPage() {
             </div>
 
             <div className={s.statCard}>
-              <div className={s.statIconWrap}><Trophy aria-hidden /></div>
+              <div className={s.statIconWrap}>
+                <Trophy aria-hidden />
+              </div>
               <div className={s.statMeta}>
                 <span className={s.statLabel}>Módulos completados</span>
                 <span className={s.statValue}>{stats?.completed || 0}</span>
@@ -744,7 +940,8 @@ export default function TestsPage() {
               <div className={s.statMeta}>
                 <span className={s.statLabel}>Medallas</span>
                 <span className={s.statValueSm}>
-                  <b>{stats?.medals.gold || 0}</b> oro · <b>{stats?.medals.silver || 0}</b> plata · <b>{stats?.medals.bronze || 0}</b> bronce
+                  <b>{stats?.medals.gold || 0}</b> oro · <b>{stats?.medals.silver || 0}</b> plata ·{" "}
+                  <b>{stats?.medals.bronze || 0}</b> bronce
                 </span>
               </div>
             </div>
@@ -753,11 +950,14 @@ export default function TestsPage() {
 
         <section className={s.grid} aria-label="Progreso por módulo">
           {modules.map((m) => {
-            const isAbc = m.id.toLowerCase() === "abecedario" || m.name.toLowerCase() === "abecedario";
+            const isAbc =
+              m.id.toLowerCase() === "abecedario" || m.name.toLowerCase() === "abecedario";
             return (
               <article key={m.id} className={s.card}>
                 <div className={s.cardHeader}>
-                  <div className={s.iconWrap}><Star aria-hidden /></div>
+                  <div className={s.iconWrap}>
+                    <Star aria-hidden />
+                  </div>
 
                   <div className={s.cardHeadings}>
                     <h3 className={s.cardTitle}>{m.name}</h3>
@@ -777,9 +977,15 @@ export default function TestsPage() {
                 </div>
 
                 <div className={s.metaRow}>
-                  <span className={s.pill}>Intentos: <b>{m.attempts}</b></span>
-                  <span className={s.pill}>Mejor: <b>{Math.round(m.bestScore)}%</b></span>
-                  <span className={s.pill}><Coins size={14} /> {m.coinsEarned}</span>
+                  <span className={s.pill}>
+                    Intentos: <b>{m.attempts}</b>
+                  </span>
+                  <span className={s.pill}>
+                    Mejor: <b>{Math.round(m.bestScore)}%</b>
+                  </span>
+                  <span className={s.pill}>
+                    <Coins size={14} /> {m.coinsEarned}
+                  </span>
                 </div>
 
                 <div className={s.actionRow}>
