@@ -15,6 +15,48 @@ async function authFetch(path: string, init: RequestInit = {}) {
   });
 }
 
+// ===========================
+// Tipos para la nueva API
+// ===========================
+
+export type ModuleProgress = {
+  id: string;
+  name: string;
+  progress: number;
+  attempts: number;
+  bestScore: number;
+  medal: 'none' | 'bronze' | 'silver' | 'gold';
+  coinsEarned: number;
+};
+
+export type UserStats = {
+  totalCoins: number;
+  completed: number;
+  medals: {
+    gold: number;
+    silver: number;
+    bronze: number;
+  };
+  modules: ModuleProgress[];
+};
+
+export type IntentoResponse = {
+  ok: boolean;
+  progreso: {
+    porcentaje: number;
+    intentos: number;
+    mejorPuntaje: number;
+    medalla: string;
+    monedasGanadas: number;
+  };
+  monedas: number;
+  coinEarned: boolean;
+};
+
+// ===========================
+// API Legacy (mantener compatibilidad)
+// ===========================
+
 export type ProgressRow = {
   module_key: string;
   lesson_key: string;
@@ -40,5 +82,76 @@ export async function saveProgress(moduleKey: string, lessonKey: string, complet
 export async function clearModule(moduleKey: string) {
   const res = await authFetch(`/api/progress/${moduleKey}`, { method: "DELETE" });
   if (!res.ok) throw new Error("No se pudo limpiar el módulo");
+  return res.json();
+}
+
+// ===========================
+// Nueva API - Sistema de progreso y monedas
+// ===========================
+
+/**
+ * Obtener estadísticas completas del usuario
+ */
+export async function getUserStats(): Promise<UserStats> {
+  const res = await authFetch("/api/stats");
+  if (!res.ok) throw new Error("No se pudieron obtener las estadísticas");
+  return res.json();
+}
+
+/**
+ * Obtener progreso de un módulo específico
+ */
+export async function getModuleProgress(moduleKey: string): Promise<ModuleProgress> {
+  const res = await authFetch(`/api/progreso/${moduleKey}`);
+  if (!res.ok) throw new Error(`No se pudo obtener el progreso del módulo ${moduleKey}`);
+  return res.json();
+}
+
+/**
+ * Registrar un intento de práctica
+ * @param moduleKey - Clave del módulo (ej: 'abecedario')
+ * @param precision - Nivel de precisión (0-100)
+ * @param correcta - Si el intento fue correcto
+ * @param senaId - ID de la seña (opcional)
+ */
+export async function registrarIntento(
+  moduleKey: string,
+  precision: number,
+  correcta: boolean,
+  senaId?: number
+): Promise<IntentoResponse> {
+  const res = await authFetch("/api/intentos", {
+    method: "POST",
+    body: JSON.stringify({
+      moduleKey,
+      precision,
+      correcta,
+      senaId,
+    }),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: "unknown" }));
+    throw new Error(error.error || "No se pudo registrar el intento");
+  }
+
+  return res.json();
+}
+
+/**
+ * Obtener señas de un módulo
+ */
+export async function getSenas(moduleKey: string) {
+  const res = await authFetch(`/api/senas/${moduleKey}`);
+  if (!res.ok) throw new Error(`No se pudieron obtener las señas del módulo ${moduleKey}`);
+  return res.json();
+}
+
+/**
+ * Obtener todos los módulos disponibles
+ */
+export async function getModulos() {
+  const res = await authFetch("/api/modulos");
+  if (!res.ok) throw new Error("No se pudieron obtener los módulos");
   return res.json();
 }
