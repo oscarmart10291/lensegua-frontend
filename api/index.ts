@@ -64,6 +64,7 @@ app.get("/api/stats", requireAuth, wrap(async (req: AuthReq, res) => {
     bestScore: Number(p.mejor_puntaje || 0),
     medal: p.medalla || 'none',
     coinsEarned: p.monedas_ganadas,
+    currentLetterIndex: p.current_letter_index,
   }));
 
   res.json({
@@ -115,16 +116,18 @@ app.get("/api/progreso/:moduleKey", requireAuth, wrap(async (req: AuthReq, res) 
     bestScore: Number(progreso.mejor_puntaje || 0),
     medal: progreso.medalla || 'none',
     coinsEarned: progreso.monedas_ganadas,
+    currentLetterIndex: progreso.current_letter_index,
   });
 }));
 
 // Registrar un intento de práctica
 app.post("/api/intentos", requireAuth, wrap(async (req: AuthReq, res) => {
-  const { moduleKey, senaId, precision, correcta } = req.body as {
+  const { moduleKey, senaId, precision, correcta, currentLetterIndex } = req.body as {
     moduleKey: string;
     senaId?: number;
     precision: number;
     correcta: boolean;
+    currentLetterIndex?: number;
   };
 
   if (!moduleKey || precision === undefined || correcta === undefined) {
@@ -278,6 +281,7 @@ app.post("/api/intentos", requireAuth, wrap(async (req: AuthReq, res) => {
       medalla: medalla,
       estado: estado,
       fecha_actualizacion: new Date(),
+      ...(currentLetterIndex !== undefined && { current_letter_index: currentLetterIndex }),
     },
   });
 

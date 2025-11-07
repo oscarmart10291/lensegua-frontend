@@ -167,6 +167,7 @@ model ProgresoModulo {
   mejor_puntaje       Decimal?  @db.Decimal(5, 2)
   medalla             String?   @db.VarChar(10) // 'gold', 'silver', 'bronze', 'none'
   monedas_ganadas     Int       @default(0)
+  current_letter_index Int?     // Para abecedario: índice de la letra actual (0-25)
 
   // Relaciones
   usuario             Usuario   @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
