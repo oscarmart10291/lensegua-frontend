@@ -117,6 +117,7 @@ function AbecedarioTestModal({
   const capturedFramesRef = useRef<Sequence>([]);
   const templatesRef = useRef<Template[]>([]);
   const templateDictRef = useRef<TemplateDict>({});
+  const mountedRef = useRef(true); // Para saber si el componente está montado
   const [heuristicResult, setHeuristicResult] = useState<{ score: number; decision: string; distance: number } | null>(null);
 
   // Cargar imágenes del abecedario desde Firebase
@@ -661,8 +662,9 @@ function AbecedarioTestModal({
     // Limpiar promesa compartida a nivel de módulo
     cameraInitPromise = null;
 
-    // Resetear flags de cámara
+    // Resetear flags de cámara y montaje
     cameraReadyRef.current = false;
+    mountedRef.current = false;
 
     // Limpiar estado heurístico
     setHeuristicState("idle");
@@ -676,6 +678,8 @@ function AbecedarioTestModal({
   useEffect(() => {
     if (!open) return;
 
+    // Marcar componente como montado
+    mountedRef.current = true;
     console.log("🔵 [useEffect open] Modal abierto, llamando startCamera()...");
     startCamera(); // startCamera tiene su propio lock interno
 
