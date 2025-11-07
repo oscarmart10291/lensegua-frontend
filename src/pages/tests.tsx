@@ -1,7 +1,5 @@
-// src/pages/tests_heuristic.tsx
-// Nueva versión con sistema heurístico
-
-import React, { useEffect, useRef, useState, useCallback } from "react";
+// src/pages/tests.tsx
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import Navbar from "../components/Navbar";
 import s from "./tests.module.css";
 import {
@@ -16,14 +14,17 @@ import {
   CheckCircle,
 } from "lucide-react";
 
+// 👇 Si ya lo tenías en otra ruta, ajusta el import
 import { MODULES } from "../constants/modules";
+
+// 👇 Utilidades de Firebase Storage que ya usas en LessonMedia
 import { getAbecedarioMaybe as getAbecedarioUrls, AbcMediaItem } from "../lib/storage";
 
-// MediaPipe Hands
+// 👇 MediaPipe Hands
 import { Hands, HAND_CONNECTIONS, Results } from "@mediapipe/hands";
 import { drawConnectors } from "@mediapipe/drawing_utils";
 
-// Sistema heurístico
+// 👇 Sistema heurístico (en lugar de TensorFlow)
 import {
   matchSequence,
   parseLandmarks,
@@ -35,7 +36,7 @@ import {
   type TemplateDict,
 } from "../lib/heuristics";
 
-// API para progreso y monedas
+// 👇 API para progreso y monedas
 import { getUserStats, registrarIntento, UserStats } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 
@@ -63,10 +64,13 @@ function medalLabel(tier: MedalTier) {
   }
 }
 
+// =============== Configuración para detección heurística ===============
 const HEURISTIC_CFG = {
-  MIN_SCORE: 60, // 60% mínimo para marcar como correcta
+  MIN_SCORE: 60,          // 60% mínimo para marcar como correcta
   CAPTURE_DURATION: 3000, // 3 segundos capturando frames
-  MIN_FRAMES: 20, // Mínimo de frames para analizar
+  MIN_FRAMES: 20,         // Mínimo de frames para analizar
+  TEMPLATES_PATH: "/landmarks",
+  MAX_TEMPLATES_PER_LETTER: 10,
 };
 
 const MAX_ITEMS = 26; // todas las letras A-Z
@@ -85,10 +89,8 @@ function AbecedarioTestModal({
   const [loading, setLoading] = useState(true);
   const [idx, setIdx] = useState(0);
 
-  // Estado de detección heurística
-  const [capturing, setCapturing] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [score, setScore] = useState(0); // Score del último análisis
+  // Estado de detección
+  const [score, setScore] = useState(0); // 0..100
   const [correct, setCorrect] = useState(false);
   const autoNextRef = useRef<number | null>(null);
 
@@ -101,11 +103,12 @@ function AbecedarioTestModal({
   const sendingRef = useRef(false);
 
   // Sistema heurístico
+  const [capturing, setCapturing] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const capturedFramesRef = useRef<Sequence>([]);
+  const captureStartRef = useRef(0);
   const templatesRef = useRef<Template[]>([]);
   const templateDictRef = useRef<TemplateDict>({});
-  const captureStartRef = useRef<number>(0);
-  const lastAnalysisRef = useRef<number>(0);
 
   // Cargar imágenes del abecedario desde Firebase
   useEffect(() => {
@@ -131,13 +134,10 @@ function AbecedarioTestModal({
     };
   }, [open]);
 
-  // Resetear estado al cambiar de letra
+  // Reiniciar score al cambiar de letra
   const resetScoreForCurrent = useCallback(() => {
     setScore(0);
     setCorrect(false);
-    setCapturing(false);
-    setAnalyzing(false);
-    capturedFramesRef.current = [];
     if (autoNextRef.current) {
       window.clearTimeout(autoNextRef.current);
       autoNextRef.current = null;
@@ -149,46 +149,56 @@ function AbecedarioTestModal({
     resetScoreForCurrent();
   }, [open, idx, resetScoreForCurrent]);
 
-  // Cargar plantillas heurísticas para la letra actual
+  // Cargar plantillas heurísticas cuando cambia la letra
   useEffect(() => {
-    if (!open || !items[idx]) return;
-
-    const currentLabel = items[idx].label;
+    if (!open) return;
+    const currentLabel = items[idx]?.label;
     if (!currentLabel) return;
 
-    let cancelled = false;
+    let active = true;
 
     (async () => {
       try {
-        // Cargar plantillas de la letra objetivo
-        const templates = await loadTemplatesForLetter("/landmarks", currentLabel, 3);
-        if (cancelled) return;
+        console.log(`🔧 Cargando plantillas para "${currentLabel}"...`);
+
+        const templates = await loadTemplatesForLetter(
+          HEURISTIC_CFG.TEMPLATES_PATH,
+          currentLabel,
+          HEURISTIC_CFG.MAX_TEMPLATES_PER_LETTER
+        );
+
+        if (!active) return;
 
         templatesRef.current = templates;
-        console.log(`✅ Plantillas cargadas para "${currentLabel}": ${templates.length}`);
+        console.log(`✅ ${templates.length} plantillas cargadas para "${currentLabel}"`);
 
-        // Cargar plantillas de otras letras para impostor check
-        const allLetters = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "RR", "S", "T", "U", "V", "W", "X", "Y", "Z"];
-        const otherLetters = allLetters.filter(l => l !== currentLabel).slice(0, 5);
+        // Pre-cargar todas las letras en el diccionario si aún no está
+        if (Object.keys(templateDictRef.current).length === 0) {
+          console.log("📚 Pre-cargando todas las plantillas...");
+          const allLetters = items.map(it => it.label).filter(Boolean);
 
-        for (const letter of otherLetters) {
-          const otherTemplates = await loadTemplatesForLetter("/landmarks", letter, 1);
-          if (cancelled) return;
-          if (otherTemplates.length > 0) {
-            templateDictRef.current[letter] = otherTemplates;
+          for (const letter of allLetters) {
+            const letterTemplates = await loadTemplatesForLetter(
+              HEURISTIC_CFG.TEMPLATES_PATH,
+              letter,
+              HEURISTIC_CFG.MAX_TEMPLATES_PER_LETTER
+            );
+            templateDictRef.current[letter] = letterTemplates;
           }
+
+          console.log(`✅ Pre-cargadas ${Object.keys(templateDictRef.current).length} letras`);
         }
-      } catch (error) {
-        console.error("Error cargando plantillas:", error);
+      } catch (err) {
+        console.error(`❌ Error cargando plantillas para "${currentLabel}":`, err);
       }
     })();
 
     return () => {
-      cancelled = true;
+      active = false;
     };
   }, [open, idx, items]);
 
-  // Iniciar cámara y MediaPipe
+  // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -209,7 +219,7 @@ function AbecedarioTestModal({
         selfieMode: true,
         maxNumHands: 1,
         modelComplexity: 1,
-        minDetectionConfidence: 0.5,
+        minDetectionConfidence: 0.6,
         minTrackingConfidence: 0.6,
       });
 
@@ -257,15 +267,12 @@ function AbecedarioTestModal({
 
         // Gestión automática de captura y análisis
         const now = performance.now();
-
-        // Iniciar captura automáticamente si no está capturando ni analizando
         if (!capturing && !analyzing && !correct) {
           setCapturing(true);
           capturedFramesRef.current = [];
           captureStartRef.current = now;
         }
 
-        // Si estamos capturando, verificar si debemos analizar
         if (capturing && now - captureStartRef.current >= HEURISTIC_CFG.CAPTURE_DURATION) {
           setCapturing(false);
           analyzeCapture();
@@ -287,96 +294,107 @@ function AbecedarioTestModal({
       console.error(err);
       alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
     }
-  }, [capturing, analyzing, correct]);
+  }, []);
 
-  // Analizar captura con sistema heurístico
-  const analyzeCapture = async () => {
+  // Analizar secuencia capturada con el sistema heurístico
+  const analyzeCapture = useCallback(async () => {
     const captured = capturedFramesRef.current;
     const currentLabel = items[idx]?.label;
 
-    if (!currentLabel) return;
+    if (captured.length < HEURISTIC_CFG.MIN_FRAMES) {
+      console.log(`⚠️ Pocos frames capturados: ${captured.length} < ${HEURISTIC_CFG.MIN_FRAMES}`);
+      setAnalyzing(false);
+      capturedFramesRef.current = [];
+      captureStartRef.current = 0;
+      setCapturing(false);
+      return;
+    }
+
+    if (!currentLabel) {
+      console.log("⚠️ No hay letra seleccionada");
+      setAnalyzing(false);
+      return;
+    }
 
     setAnalyzing(true);
 
-    console.log(`\n🔍 ===== ANÁLISIS TEST: ${currentLabel} =====`);
-    console.log(`📊 Frames capturados: ${captured.length}`);
+    try {
+      const targetTemplates = templatesRef.current;
 
-    if (captured.length < HEURISTIC_CFG.MIN_FRAMES) {
-      console.log(`❌ Muy pocos frames (mínimo: ${HEURISTIC_CFG.MIN_FRAMES})`);
-      setAnalyzing(false);
-      setScore(0);
-      // Reiniciar captura automáticamente
-      setTimeout(() => {
-        setCapturing(true);
+      if (targetTemplates.length === 0) {
+        console.warn(`⚠️ No hay plantillas para "${currentLabel}"`);
+        setScore(0);
+        setAnalyzing(false);
         capturedFramesRef.current = [];
-        captureStartRef.current = performance.now();
-      }, 500);
-      return;
-    }
-
-    const targetTemplates = templatesRef.current;
-    if (targetTemplates.length === 0) {
-      console.log(`❌ No hay plantillas para "${currentLabel}"`);
-      setAnalyzing(false);
-      setScore(0);
-      return;
-    }
-
-    // Seleccionar impostores
-    const impostors = selectImpostorTemplates(templateDictRef.current, currentLabel, 5);
-
-    // Ejecutar matching
-    const result = matchSequence(captured, targetTemplates, DEFAULT_CONFIG, impostors);
-
-    console.log(`📈 RESULTADO: Score=${result.score.toFixed(2)}%, Decision=${result.decision}`);
-
-    const finalScore = Math.round(result.score);
-    setScore(finalScore);
-    setAnalyzing(false);
-
-    // Si es correcto y no está ya marcado
-    if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE && !correct) {
-      setCorrect(true);
-
-      // Registrar intento en la base de datos
-      registrarIntento("abecedario", finalScore, true)
-        .then((response) => {
-          console.log("✅ Intento registrado:", response);
-          if (response.coinEarned) {
-            console.log("🪙 +1 moneda ganada!");
-          }
-          if (onProgressUpdate) {
-            onProgressUpdate();
-          }
-        })
-        .catch((err) => {
-          console.error("❌ Error al registrar intento:", err);
-        });
-
-      // Auto-avanzar a la siguiente letra
-      if (!autoNextRef.current) {
-        autoNextRef.current = window.setTimeout(() => {
-          autoNextRef.current = null;
-          setCorrect(false);
-          setIdx((p) => {
-            const nextIdx = p + 1;
-            if (nextIdx >= items.length) {
-              alert("¡Test finalizado! ✅");
-              return p;
-            }
-            return nextIdx;
-          });
-        }, 1500);
+        captureStartRef.current = 0;
+        setCapturing(false);
+        return;
       }
-    } else {
-      // No pasó, reiniciar captura después de un breve delay
-      setTimeout(() => {
-        capturedFramesRef.current = [];
-        setCapturing(true);
-        captureStartRef.current = performance.now();
-      }, 1000);
+
+      // Seleccionar impostores (otras letras)
+      const impostors = selectImpostorTemplates(templateDictRef.current, currentLabel, 5);
+
+      console.log(`🔍 Analizando ${captured.length} frames contra ${targetTemplates.length} plantillas de "${currentLabel}"`);
+
+      // Ejecutar matching con 4 checks
+      const result = matchSequence(captured, targetTemplates, DEFAULT_CONFIG, impostors);
+
+      const finalScore = Math.round(result.score);
+      setScore(finalScore);
+
+      console.log(`📊 Resultado: ${result.decision} (score: ${finalScore}%)`);
+      console.log(`   - Mejor plantilla: ${result.bestTemplateId}`);
+      console.log(`   - Distancia: ${result.distance.toFixed(4)}`);
+      console.log(`   - Detalles: ${result.details}`);
+
+      setAnalyzing(false);
+      capturedFramesRef.current = [];
+      captureStartRef.current = 0;
+      setCapturing(false);
+
+      // Si es correcto, registrar en DB y auto-avanzar
+      if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE && !correct) {
+        setCorrect(true);
+
+        registrarIntento("abecedario", finalScore, true)
+          .then((response) => {
+            console.log("✅ Intento registrado:", response);
+            if (response.coinEarned) {
+              console.log("🪙 +1 moneda ganada!");
+            }
+            if (onProgressUpdate) {
+              onProgressUpdate();
+            }
+          })
+          .catch((err) => {
+            console.error("❌ Error al registrar intento:", err);
+          });
+
+        // Auto-avanzar a la siguiente letra
+        if (!autoNextRef.current) {
+          autoNextRef.current = window.setTimeout(() => {
+            autoNextRef.current = null;
+            setCorrect(false);
+            setIdx((p) => {
+              const nextIdx = p + 1;
+              if (nextIdx >= items.length) {
+                alert("¡Test finalizado! ✅");
+                return p;
+              }
+              return nextIdx;
+            });
+          }, 1500);
+        }
+      }
+    } catch (err) {
+      console.error("❌ Error en análisis heurístico:", err);
+      setScore(0);
+      setAnalyzing(false);
+      capturedFramesRef.current = [];
+      captureStartRef.current = 0;
+      setCapturing(false);
     }
-  };
+  }, [items, idx, correct, onProgressUpdate]);
 
   // Limpieza
   const cleanup = useCallback(() => {
@@ -397,6 +415,12 @@ function AbecedarioTestModal({
       window.clearTimeout(autoNextRef.current);
       autoNextRef.current = null;
     }
+
+    // Limpiar estado heurístico
+    setCapturing(false);
+    setAnalyzing(false);
+    capturedFramesRef.current = [];
+    captureStartRef.current = 0;
   }, []);
 
   useEffect(() => {
@@ -407,261 +431,340 @@ function AbecedarioTestModal({
 
   if (!open) return null;
 
+  const pct = Math.round(score); // score ya está en 0..100
+
   return (
     <div
       role="dialog"
       aria-modal="true"
+      aria-label="Prueba de Abecedario"
       style={{
         position: "fixed",
         inset: 0,
-        backgroundColor: "rgba(0,0,0,0.7)",
-        zIndex: 9999,
+        background: "rgba(0,0,0,0.55)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        zIndex: 1000,
+        padding: 16,
       }}
     >
       <div
         style={{
-          backgroundColor: "#fff",
+          width: "min(1200px, 100%)",
+          maxHeight: "95vh",
+          background: "#0b0f1a",
+          color: "#e5e7eb",
           borderRadius: 16,
-          padding: "32px",
-          maxWidth: 900,
-          width: "90%",
-          maxHeight: "90vh",
-          overflowY: "auto",
-          position: "relative",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
         }}
       >
-        {/* Botón cerrar */}
-        <button
-          onClick={onClose}
+        {/* Header modal */}
+        <div
           style={{
-            position: "absolute",
-            top: 16,
-            right: 16,
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: 8,
+            display: "flex",
+            alignItems: "center",
+            padding: "12px 16px",
+            borderBottom: "1px solid #1f2937",
+            gap: 12,
           }}
-          aria-label="Cerrar"
         >
-          <X size={24} />
-        </button>
+          <Camera size={18} />
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>
+            Prueba: Abecedario (Detección Real)
+          </h3>
+          <div style={{ marginLeft: "auto" }}>
+            <button
+              onClick={() => {
+                cleanup();
+                onClose();
+              }}
+              title="Cerrar"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 10px",
+                borderRadius: 8,
+                background: "#111827",
+                border: "1px solid #1f2937",
+                color: "#e5e7eb",
+                cursor: "pointer",
+              }}
+            >
+              <X size={16} /> Cerrar
+            </button>
+          </div>
+        </div>
 
-        <h2 style={{ marginBottom: 24, fontSize: 28, fontWeight: 700 }}>
-          Test del Abecedario
-        </h2>
+        {/* Cuerpo: imagen objetivo + cámara */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1.5fr",
+            gap: 12,
+            padding: 12,
+          }}
+        >
+          {/* Imagen objetivo */}
+          <div
+            style={{
+              background: "#0f172a",
+              border: "1px solid #1f2937",
+              borderRadius: 12,
+              minHeight: 300,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ padding: 10, borderBottom: "1px solid #1f2937" }}>
+              <strong>Imagen objetivo</strong>
+            </div>
+            <div
+              style={{
+                flex: 1,
+                display: "grid",
+                placeItems: "center",
+                padding: 8,
+              }}
+            >
+              {loading ? (
+                <span style={{ opacity: 0.8 }}>Cargando imágenes…</span>
+              ) : items.length === 0 ? (
+                <span style={{ opacity: 0.8 }}>No hay imágenes en Firebase.</span>
+              ) : (
+                <img
+                  src={items[idx]?.url}
+                  alt={items[idx]?.label || `Imagen ${idx + 1}`}
+                  style={{
+                    maxWidth: "100%",
+                    maxHeight: "100%",
+                    objectFit: "contain",
+                    borderRadius: 8,
+                  }}
+                />
+              )}
+            </div>
 
-        {loading ? (
-          <div style={{ textAlign: "center", padding: "60px 0" }}>Cargando...</div>
-        ) : (
-          <>
-            {/* Progreso */}
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ fontSize: 14, marginBottom: 8, color: "#64748b" }}>
-                Letra {idx + 1} de {items.length}
+            {/* Controles de navegación manual */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: 10,
+                borderTop: "1px solid #1f2937",
+              }}
+            >
+              <button
+                onClick={() => setIdx((p) => (p > 0 ? p - 1 : p))}
+                disabled={idx === 0 || items.length === 0}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  background: "#111827",
+                  border: "1px solid #1f2937",
+                  color: "#e5e7eb",
+                  cursor: idx === 0 || items.length === 0 ? "not-allowed" : "pointer",
+                }}
+              >
+                <Left size={16} /> Anterior
+              </button>
+
+              <div style={{ marginLeft: "auto" }}>
+                <span style={{ fontSize: 12, opacity: 0.8 }}>
+                  {items.length ? `${idx + 1} / ${items.length}` : "—"}
+                </span>
+              </div>
+
+              <button
+                onClick={() =>
+                  setIdx((p) => (items.length ? Math.min(p + 1, items.length - 1) : p))
+                }
+                disabled={items.length === 0 || idx === items.length - 1}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  background: "#2563eb",
+                  border: "1px solid #1e40af",
+                  color: "white",
+                  cursor:
+                    items.length === 0 || idx === items.length - 1 ? "not-allowed" : "pointer",
+                }}
+              >
+                Siguiente <Right size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Cámara + Landmarks + Barra de coincidencia */}
+          <div
+            style={{
+              background: "#0f172a",
+              border: "1px solid #1f2937",
+              borderRadius: 12,
+              minHeight: 300,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              position: "relative",
+            }}
+          >
+            <div style={{ padding: 10, borderBottom: "1px solid #1f2937" }}>
+              <strong>Cámara (Detección con Sistema Heurístico)</strong>
+            </div>
+
+            <div
+              style={{
+                position: "relative",
+                flex: 1,
+                background: "#000",
+              }}
+            >
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  opacity: 0,
+                }}
+              />
+              <canvas
+                ref={canvasRef}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                }}
+              />
+            </div>
+
+            {/* Barra de coincidencia */}
+            <div
+              style={{
+                padding: 12,
+                borderTop: "1px solid #1f2937",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <div style={{ minWidth: 140, fontSize: 13, opacity: 0.85 }}>
+                Nivel de coincidencia
               </div>
               <div
+                aria-label="Nivel de coincidencia"
                 style={{
-                  width: "100%",
-                  height: 8,
-                  backgroundColor: "#e2e8f0",
-                  borderRadius: 4,
+                  position: "relative",
+                  flex: 1,
+                  height: 14,
+                  background: "#111827",
+                  border: "1px solid #1f2937",
+                  borderRadius: 999,
                   overflow: "hidden",
                 }}
               >
                 <div
                   style={{
-                    width: `${((idx + 1) / items.length) * 100}%`,
+                    width: `${pct}%`,
                     height: "100%",
-                    backgroundColor: "#3b82f6",
-                    transition: "width 0.3s",
+                    background: pct >= 60 ? "#16a34a" : "#2563eb",
+                    transition: "width 120ms linear",
                   }}
                 />
-              </div>
-            </div>
-
-            {/* Letra actual */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-              {/* Imagen de referencia */}
-              <div>
-                <h3 style={{ marginBottom: 12, fontSize: 18, fontWeight: 600 }}>
-                  Letra: {items[idx]?.label}
-                </h3>
-                {items[idx] && (
-                  <img
-                    src={items[idx].url}
-                    alt={items[idx].label}
-                    style={{ width: "100%", borderRadius: 8 }}
-                  />
-                )}
-              </div>
-
-              {/* Vista de cámara */}
-              <div>
-                <h3 style={{ marginBottom: 12, fontSize: 18, fontWeight: 600 }}>
-                  Tu seña
-                </h3>
-                <div style={{ position: "relative" }}>
-                  <video
-                    ref={videoRef}
-                    style={{ display: "none" }}
-                    playsInline
-                    muted
-                  />
-                  <canvas
-                    ref={canvasRef}
-                    style={{ width: "100%", borderRadius: 8, backgroundColor: "#000" }}
-                  />
-
-                  {/* Estado */}
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: 12,
-                      left: 12,
-                      padding: "6px 12px",
-                      borderRadius: 6,
-                      backgroundColor: capturing
-                        ? "#3b82f6"
-                        : analyzing
-                        ? "#f59e0b"
-                        : correct
-                        ? "#10b981"
-                        : "#6b7280",
-                      color: "#fff",
-                      fontSize: 12,
-                      fontWeight: 600,
-                    }}
-                  >
-                    {capturing
-                      ? "Capturando..."
-                      : analyzing
-                      ? "Analizando..."
-                      : correct
-                      ? "¡Correcto!"
-                      : "Esperando..."}
-                  </div>
-
-                  {/* Score */}
-                  {score > 0 && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: 12,
-                        right: 12,
-                        padding: "6px 12px",
-                        borderRadius: 6,
-                        backgroundColor: correct ? "#10b981" : "#6b7280",
-                        color: "#fff",
-                        fontSize: 14,
-                        fontWeight: 700,
-                      }}
-                    >
-                      {score}%
-                    </div>
-                  )}
-
-                  {/* Checkmark cuando correcto */}
-                  {correct && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: "50%",
-                        left: "50%",
-                        transform: "translate(-50%, -50%)",
-                      }}
-                    >
-                      <CheckCircle size={80} color="#10b981" />
-                    </div>
-                  )}
-                </div>
-
-                {/* Instrucciones */}
                 <div
                   style={{
-                    marginTop: 12,
-                    padding: 12,
-                    backgroundColor: "#f1f5f9",
-                    borderRadius: 6,
-                    fontSize: 13,
-                    color: "#475569",
+                    position: "absolute",
+                    right: 8,
+                    top: 0,
+                    bottom: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    fontSize: 12,
+                    opacity: 0.9,
                   }}
                 >
-                  {capturing
-                    ? `Mantén la seña de "${items[idx]?.label}"...`
-                    : analyzing
-                    ? "Analizando tu seña..."
-                    : correct
-                    ? "¡Excelente! Avanzando a la siguiente..."
-                    : `Haz la seña de "${items[idx]?.label}"`}
+                  {pct}%
                 </div>
               </div>
+
+              {correct ? (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 13,
+                    color: "#22c55e",
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <CheckCircle size={16} /> ¡Correcto!
+                </span>
+              ) : (
+                <span style={{ fontSize: 12, opacity: 0.7, whiteSpace: "nowrap" }}>
+                  Mínimo: 60%
+                </span>
+              )}
             </div>
 
-            {/* Navegación */}
             <div
               style={{
                 display: "flex",
-                justifyContent: "space-between",
-                marginTop: 24,
+                gap: 8,
+                padding: 10,
+                borderTop: "1px solid #1f2937",
               }}
             >
               <button
                 onClick={() => {
-                  if (idx > 0) {
-                    setIdx(idx - 1);
-                  }
+                  resetScoreForCurrent();
+                  startCamera();
                 }}
-                disabled={idx === 0}
+                title="Reiniciar cámara"
                 style={{
-                  padding: "10px 20px",
-                  borderRadius: 8,
-                  border: "none",
-                  backgroundColor: idx === 0 ? "#e2e8f0" : "#3b82f6",
-                  color: idx === 0 ? "#94a3b8" : "#fff",
-                  cursor: idx === 0 ? "not-allowed" : "pointer",
-                  fontWeight: 600,
-                  display: "flex",
+                  display: "inline-flex",
                   alignItems: "center",
-                  gap: 8,
+                  gap: 6,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  background: "#111827",
+                  border: "1px solid #1f2937",
+                  color: "#e5e7eb",
+                  cursor: "pointer",
                 }}
               >
-                <Left size={18} />
-                Anterior
-              </button>
-
-              <button
-                onClick={() => {
-                  if (idx < items.length - 1) {
-                    setIdx(idx + 1);
-                  }
-                }}
-                disabled={idx >= items.length - 1}
-                style={{
-                  padding: "10px 20px",
-                  borderRadius: 8,
-                  border: "none",
-                  backgroundColor: idx >= items.length - 1 ? "#e2e8f0" : "#3b82f6",
-                  color: idx >= items.length - 1 ? "#94a3b8" : "#fff",
-                  cursor: idx >= items.length - 1 ? "not-allowed" : "pointer",
-                  fontWeight: 600,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                Siguiente
-                <Right size={18} />
+                <Camera size={16} /> Reiniciar cámara
               </button>
             </div>
-          </>
-        )}
+          </div>
+        </div>
+
+        {/* Responsive */}
+        <style>{`
+          @media (max-width: 900px) {
+            [role="dialog"] > div > div:nth-child(2) {
+              grid-template-columns: 1fr !important;
+            }
+          }
+        `}</style>
       </div>
     </div>
   );
@@ -671,172 +774,212 @@ function AbecedarioTestModal({
 export default function TestsPage() {
   const { user } = useAuth();
   const [stats, setStats] = useState<UserStats | null>(null);
-  const [modules, setModules] = useState<ModuleProgress[]>([]);
-  const [selectedModule, setSelectedModule] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showAbcModal, setShowAbcModal] = useState(false);
 
-  // Cargar stats del usuario
-  useEffect(() => {
+  // Cargar estadísticas del usuario
+  const loadStats = useCallback(async () => {
     if (!user) return;
 
-    getUserStats()
-      .then((data) => {
-        setStats(data);
-
-        // Construir módulos de progreso
-        const moduleData: ModuleProgress[] = MODULES.map((m) => {
-          const moduleAttempts = data.intentos.filter((i) => i.tipo === m.id);
-          const totalAttempts = moduleAttempts.length;
-          const successfulAttempts = moduleAttempts.filter((i) => i.correcta).length;
-          const progress = totalAttempts > 0 ? (successfulAttempts / totalAttempts) * 100 : 0;
-          const bestScore = moduleAttempts.length > 0
-            ? Math.max(...moduleAttempts.map((i) => i.precision))
-            : 0;
-
-          let medal: MedalTier = "none";
-          if (bestScore >= 90) medal = "gold";
-          else if (bestScore >= 75) medal = "silver";
-          else if (bestScore >= 60) medal = "bronze";
-
-          return {
-            id: m.id,
-            name: m.name,
-            subtitle: m.subtitle,
-            progress: Math.round(progress),
-            attempts: totalAttempts,
-            bestScore,
-            medal,
-            coinsEarned: moduleAttempts.reduce((sum, i) => sum + (i.monedas_ganadas || 0), 0),
-          };
-        });
-
-        setModules(moduleData);
-      })
-      .catch((err) => {
-        console.error("Error cargando stats:", err);
+    try {
+      setLoading(true);
+      const data = await getUserStats();
+      setStats(data);
+    } catch (error) {
+      console.error("Error al cargar estadísticas:", error);
+      setStats({
+        totalCoins: 0,
+        completed: 0,
+        medals: { gold: 0, silver: 0, bronze: 0 },
+        modules: [],
       });
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
 
-  const refreshStats = () => {
-    if (!user) return;
-    getUserStats()
-      .then((data) => {
-        setStats(data);
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
 
-        const moduleData: ModuleProgress[] = MODULES.map((m) => {
-          const moduleAttempts = data.intentos.filter((i) => i.tipo === m.id);
-          const totalAttempts = moduleAttempts.length;
-          const successfulAttempts = moduleAttempts.filter((i) => i.correcta).length;
-          const progress = totalAttempts > 0 ? (successfulAttempts / totalAttempts) * 100 : 0;
-          const bestScore = moduleAttempts.length > 0
-            ? Math.max(...moduleAttempts.map((i) => i.precision))
-            : 0;
+  // Construir módulos combinando MODULES con el progreso de la API
+  const modules: ModuleProgress[] = useMemo(() => {
+    if (!stats) {
+      return MODULES.map((m) => ({
+        id: m.key,
+        name: m.title,
+        subtitle: m.subtitle,
+        progress: 0,
+        attempts: 0,
+        bestScore: 0,
+        medal: "none" as MedalTier,
+        coinsEarned: 0,
+        locked: false,
+      }));
+    }
 
-          let medal: MedalTier = "none";
-          if (bestScore >= 90) medal = "gold";
-          else if (bestScore >= 75) medal = "silver";
-          else if (bestScore >= 60) medal = "bronze";
+    return MODULES.map((m) => {
+      const apiProgress = stats.modules.find((mp) => mp.id === m.key);
+      return {
+        id: m.key,
+        name: m.title,
+        subtitle: m.subtitle,
+        progress: apiProgress?.progress || 0,
+        attempts: apiProgress?.attempts || 0,
+        bestScore: apiProgress?.bestScore || 0,
+        medal: (apiProgress?.medal || "none") as MedalTier,
+        coinsEarned: apiProgress?.coinsEarned || 0,
+        locked: false,
+      };
+    });
+  }, [stats]);
 
-          return {
-            id: m.id,
-            name: m.name,
-            subtitle: m.subtitle,
-            progress: Math.round(progress),
-            attempts: totalAttempts,
-            bestScore,
-            medal,
-            coinsEarned: moduleAttempts.reduce((sum, i) => sum + (i.monedas_ganadas || 0), 0),
-          };
-        });
-
-        setModules(moduleData);
-      })
-      .catch((err) => {
-        console.error("Error refrescando stats:", err);
-      });
+  const onAction = (m: ModuleProgress) => {
+    const isAbc =
+      m.id.toLowerCase() === "abecedario" || m.name.toLowerCase() === "abecedario";
+    if (isAbc) {
+      setShowAbcModal(true);
+    } else {
+      alert("Pronto disponible para este módulo.");
+    }
   };
 
+  if (loading) {
+    return (
+      <>
+        <Navbar />
+        <main className={`${s.wrapper} ${s.withNavbar}`}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              minHeight: "60vh",
+              color: "#e5e7eb",
+            }}
+          >
+            <p>Cargando estadísticas...</p>
+          </div>
+        </main>
+      </>
+    );
+  }
+
   return (
-    <div className={s.page}>
+    <>
       <Navbar />
-
-      <div className={s.container}>
+      <main className={`${s.wrapper} ${s.withNavbar}`}>
         <header className={s.header}>
-          <h1>Tests de Práctica</h1>
-          <p>Pon a prueba tus conocimientos y gana medallas</p>
-        </header>
+          <div className={s.headerTop}>
+            <h1 className={s.title}>Resultados y Tests</h1>
+            <p className={s.subtitle}>
+              Revisa tu progreso por módulo, gana <strong>monedas</strong> y obtén{" "}
+              <strong>medallas</strong> al completar.
+            </p>
+          </div>
 
-        {/* Resumen de stats */}
-        {stats && (
-          <div className={s.statsCard}>
-            <div className={s.statItem}>
-              <Coins size={24} color="#f59e0b" />
-              <div>
-                <div className={s.statValue}>{stats.monedas_totales}</div>
-                <div className={s.statLabel}>Monedas</div>
+          <div className={s.statsRow} role="region" aria-label="Estadísticas de progreso">
+            <div className={s.statCard}>
+              <div className={s.statIconWrap}>
+                <Coins aria-hidden />
+              </div>
+              <div className={s.statMeta}>
+                <span className={s.statLabel}>Monedas</span>
+                <span className={s.statValue}>{stats?.totalCoins || 0}</span>
               </div>
             </div>
-            <div className={s.statItem}>
-              <Trophy size={24} color="#10b981" />
-              <div>
-                <div className={s.statValue}>{stats.medallas_totales}</div>
-                <div className={s.statLabel}>Medallas</div>
+
+            <div className={s.statCard}>
+              <div className={s.statIconWrap}>
+                <Trophy aria-hidden />
+              </div>
+              <div className={s.statMeta}>
+                <span className={s.statLabel}>Módulos completados</span>
+                <span className={s.statValue}>{stats?.completed || 0}</span>
               </div>
             </div>
-            <div className={s.statItem}>
-              <Star size={24} color="#3b82f6" />
-              <div>
-                <div className={s.statValue}>{stats.puntos_totales}</div>
-                <div className={s.statLabel}>Puntos</div>
+
+            <div className={s.statCard}>
+              <div className={s.medalStack} aria-hidden>
+                <span className={`${s.medal} ${s.gold}`} title="Oro" />
+                <span className={`${s.medal} ${s.silver}`} title="Plata" />
+                <span className={`${s.medal} ${s.bronze}`} title="Bronce" />
+              </div>
+              <div className={s.statMeta}>
+                <span className={s.statLabel}>Medallas</span>
+                <span className={s.statValueSm}>
+                  <b>{stats?.medals.gold || 0}</b> oro · <b>{stats?.medals.silver || 0}</b> plata ·{" "}
+                  <b>{stats?.medals.bronze || 0}</b> bronce
+                </span>
               </div>
             </div>
           </div>
-        )}
+        </header>
 
-        {/* Módulos */}
-        <div className={s.moduleGrid}>
-          {modules.map((module) => (
-            <div key={module.id} className={s.moduleCard}>
-              <div className={s.moduleHeader}>
-                <Camera size={32} color="#3b82f6" />
-                <div className={s.moduleInfo}>
-                  <h3>{module.name}</h3>
-                  <p>{module.subtitle}</p>
-                </div>
-              </div>
+        <section className={s.grid} aria-label="Progreso por módulo">
+          {modules.map((m) => {
+            const isAbc =
+              m.id.toLowerCase() === "abecedario" || m.name.toLowerCase() === "abecedario";
+            return (
+              <article key={m.id} className={s.card}>
+                <div className={s.cardHeader}>
+                  <div className={s.iconWrap}>
+                    <Star aria-hidden />
+                  </div>
 
-              <div className={s.moduleStats}>
-                <div className={s.moduleStat}>
-                  <span>Progreso</span>
-                  <strong>{module.progress}%</strong>
-                </div>
-                <div className={s.moduleStat}>
-                  <span>Mejor Score</span>
-                  <strong>{module.bestScore}%</strong>
-                </div>
-                <div className={s.moduleStat}>
-                  <span>Medalla</span>
-                  <strong>{medalLabel(module.medal)}</strong>
-                </div>
-              </div>
+                  <div className={s.cardHeadings}>
+                    <h3 className={s.cardTitle}>{m.name}</h3>
+                    <p className={s.cardSubtitle}>{m.subtitle}</p>
+                  </div>
 
-              <button
-                className={s.startButton}
-                onClick={() => setSelectedModule(module.id)}
-              >
-                Comenzar Test
-                <ChevronRight size={20} />
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
+                  <div className={s.rewardArea}>
+                    <span className={s.badgeMuted}>{medalLabel(m.medal)}</span>
+                  </div>
+                </div>
 
-      {/* Modal del test */}
+                <div className={s.progressRow} aria-label={`Progreso ${Math.round(m.progress)}%`}>
+                  <div className={s.progressBar}>
+                    <div className={s.progressFill} style={{ width: `${m.progress}%` }} />
+                  </div>
+                  <span className={s.progressLabel}>{Math.round(m.progress)}%</span>
+                </div>
+
+                <div className={s.metaRow}>
+                  <span className={s.pill}>
+                    Intentos: <b>{m.attempts}</b>
+                  </span>
+                  <span className={s.pill}>
+                    Mejor: <b>{Math.round(m.bestScore)}%</b>
+                  </span>
+                  <span className={s.pill}>
+                    <Coins size={14} /> {m.coinsEarned}
+                  </span>
+                </div>
+
+                <div className={s.actionRow}>
+                  <button
+                    className={s.btnPrimary}
+                    onClick={() => onAction(m)}
+                    title={isAbc ? "Abrir test Abecedario" : "Próximamente"}
+                    disabled={!isAbc}
+                    style={isAbc ? undefined : { opacity: 0.6, cursor: "not-allowed" }}
+                  >
+                    {isAbc ? "Comenzar" : "Pronto"}
+                    <ChevronRight size={18} />
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      </main>
+
+      {/* Modal del Abecedario */}
       <AbecedarioTestModal
-        open={selectedModule === "abecedario"}
-        onClose={() => setSelectedModule(null)}
-        onProgressUpdate={refreshStats}
+        open={showAbcModal}
+        onClose={() => setShowAbcModal(false)}
+        onProgressUpdate={loadStats}
       />
-    </div>
+    </>
   );
 }
