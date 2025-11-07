@@ -1308,6 +1308,17 @@ export default function TestsPage() {
 
     return MODULES.map((m) => {
       const apiProgress = stats.modules.find((mp) => mp.id === m.key);
+
+      // Debug: Log para ver qué viene del backend
+      if (m.key === 'abecedario') {
+        console.log('📊 Progreso del abecedario desde API:', {
+          progress: apiProgress?.progress,
+          currentLetterIndex: apiProgress?.currentLetterIndex,
+          attempts: apiProgress?.attempts,
+          apiProgress: apiProgress
+        });
+      }
+
       return {
         id: m.key,
         name: m.title,
@@ -1317,6 +1328,7 @@ export default function TestsPage() {
         bestScore: apiProgress?.bestScore || 0,
         medal: (apiProgress?.medal || "none") as MedalTier,
         coinsEarned: apiProgress?.coinsEarned || 0,
+        currentLetterIndex: apiProgress?.currentLetterIndex, // Para abecedario
         locked: false,
       };
     });
