@@ -1,0 +1,177 @@
+// ===========================
+// LENSEGUA - Prisma Schema
+// ===========================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================
+// USUARIOS
+// ===========================
+model Usuario {
+  id_usuario         Int       @id @default(autoincrement())
+  nombre             String    @db.VarChar(100)
+  correo             String?   @db.VarChar(100)
+  google_id          String?   @db.VarChar(100)
+  firebase_uid       String?   @unique @db.VarChar(128)
+  fecha_registro     DateTime  @default(now()) @db.Date
+  monedas            Int       @default(0) // Campo adicional para el sistema de monedas
+
+  // Relaciones
+  intentos_practica  IntentoPractica[]
+  evaluaciones       Evaluacion[]
+  progreso_modulo    ProgresoModulo[]
+
+  @@map("usuarios")
+}
+
+// ===========================
+// MÓDULOS
+// ===========================
+model Modulo {
+  id_modulo          Int       @id @default(autoincrement())
+  nombre             String    @db.VarChar(100)
+  descripcion        String?   @db.VarChar(100)
+  nivel              Int?
+  orden              Int?
+  module_key         String?   @unique @db.VarChar(50) // Para mapear con el frontend
+
+  // Relaciones
+  senas              Sena[]
+  intentos_practica  IntentoPractica[]
+  evaluaciones       Evaluacion[]
+  progreso_modulo    ProgresoModulo[]
+
+  @@map("modulos")
+}
+
+// ===========================
+// SEÑAS
+// ===========================
+model Sena {
+  id_sena            Int       @id @default(autoincrement())
+  id_modulo          Int
+  codigo             Int?
+  nombre             String?   @db.VarChar(100)
+  precision_esperada Decimal?  @db.Decimal(5, 2)
+
+  // Relaciones
+  modulo             Modulo    @relation(fields: [id_modulo], references: [id_modulo], onDelete: Cascade)
+  recursos           RecursoMultimedia[]
+  intentos           IntentoPractica[]
+  resultados         ResultadoEvaluacion[]
+
+  @@index([id_modulo])
+  @@map("senas")
+}
+
+// ===========================
+// RECURSOS MULTIMEDIA
+// ===========================
+model RecursoMultimedia {
+  id_recurso         Int       @id @default(autoincrement())
+  id_sena            Int
+  tipo               String?   @db.VarChar(100)
+  url                String?   @db.VarChar(255)
+  formato            String?   @db.VarChar(100)
+
+  // Relaciones
+  sena               Sena      @relation(fields: [id_sena], references: [id_sena], onDelete: Cascade)
+
+  @@index([id_sena])
+  @@map("recursos_multimedia")
+}
+
+// ===========================
+// INTENTOS DE PRÁCTICA
+// ===========================
+model IntentoPractica {
+  id_intento         Int       @id @default(autoincrement())
+  id_usuario         Int
+  id_sena            Int
+  id_modulo          Int
+  precision          Decimal?  @db.Decimal(5, 2)
+  fecha_hora         DateTime  @default(now())
+  correcta           Boolean   @default(false)
+
+  // Relaciones
+  usuario            Usuario   @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
+  sena               Sena      @relation(fields: [id_sena], references: [id_sena], onDelete: Cascade)
+  modulo             Modulo    @relation(fields: [id_modulo], references: [id_modulo], onDelete: Cascade)
+
+  @@index([id_usuario])
+  @@index([id_sena])
+  @@index([id_modulo])
+  @@map("intentos_practica")
+}
+
+// ===========================
+// EVALUACIONES
+// ===========================
+model Evaluacion {
+  id_evaluacion      Int       @id @default(autoincrement())
+  id_usuario         Int
+  id_modulo          Int
+  fecha_inicio       DateTime? @db.Date
+  fecha_fin          DateTime? @db.Date
+  puntaje            Decimal?  @db.Decimal(6, 2)
+
+  // Relaciones
+  usuario            Usuario   @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
+  modulo             Modulo    @relation(fields: [id_modulo], references: [id_modulo], onDelete: Cascade)
+  resultados         ResultadoEvaluacion[]
+
+  @@index([id_usuario])
+  @@index([id_modulo])
+  @@map("evaluaciones")
+}
+
+// ===========================
+// RESULTADOS DE EVALUACIÓN
+// ===========================
+model ResultadoEvaluacion {
+  id_resultado       Int       @id @default(autoincrement())
+  id_evaluacion      Int
+  id_sena            Int
+  precision          Decimal?  @db.Decimal(5, 2)
+  correcta           Boolean?
+
+  // Relaciones
+  evaluacion         Evaluacion @relation(fields: [id_evaluacion], references: [id_evaluacion], onDelete: Cascade)
+  sena               Sena      @relation(fields: [id_sena], references: [id_sena], onDelete: Restrict)
+
+  @@index([id_evaluacion])
+  @@index([id_sena])
+  @@map("resultados_evaluacion")
+}
+
+// ===========================
+// PROGRESO POR MÓDULO
+// ===========================
+model ProgresoModulo {
+  id_usuario          Int
+  id_modulo           Int
+  estado              String?   @db.VarChar(20) // 'en_progreso', 'completo'
+  porcentaje_avance   Decimal?  @db.Decimal(5, 2)
+  promedio_precision  Decimal?  @db.Decimal(5, 2)
+  fecha_actualizacion DateTime  @default(now()) @db.Date
+
+  // Campos adicionales para el sistema de medallas
+  intentos            Int       @default(0)
+  mejor_puntaje       Decimal?  @db.Decimal(5, 2)
+  medalla             String?   @db.VarChar(10) // 'gold', 'silver', 'bronze', 'none'
+  monedas_ganadas     Int       @default(0)
+
+  // Relaciones
+  usuario             Usuario   @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
+  modulo              Modulo    @relation(fields: [id_modulo], references: [id_modulo], onDelete: Cascade)
+
+  @@id([id_usuario, id_modulo])
+  @@map("progreso_modulo")
+}
