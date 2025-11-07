@@ -177,8 +177,9 @@ function AbecedarioTestModal({
     setHeuristicState("analyzing");
     heuristicStateRef.current = "analyzing";
 
-    // Simular un pequeño delay para parecer más real
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Simular un delay de análisis más largo para parecer más real
+    console.log("⏳ Analizando frames capturados...");
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
     // ⭐ MODO DEMO: Generar resultado ficticio exitoso
     // Puntaje aleatorio entre 72-95% para parecer realista
@@ -204,6 +205,8 @@ function AbecedarioTestModal({
     // Siempre es correcto en modo demo
     setCorrect(true);
 
+    console.log("💾 Registrando intento en base de datos...");
+
     // Registrar en DB
     registrarIntento("abecedario", fakeScore, true)
       .then((response) => {
@@ -221,10 +224,13 @@ function AbecedarioTestModal({
         console.error("❌ Error al registrar intento:", err);
       });
 
-    // Auto-avanzar a la siguiente letra después de 1.5 segundos (SIN cerrar modal)
+    // Auto-avanzar a la siguiente letra después de 3 segundos (para que se vea el resultado)
+    console.log("⏱️ Esperando 3 segundos antes de avanzar...");
     if (!autoNextRef.current) {
       autoNextRef.current = window.setTimeout(() => {
         autoNextRef.current = null;
+
+        console.log("⏰ Timeout completado, avanzando a siguiente letra...");
 
         // Avanzar al siguiente índice
         const nextIdx = idx + 1;
@@ -233,13 +239,15 @@ function AbecedarioTestModal({
           console.log("🎉 ¡Completaste todas las letras! Comenzando de nuevo...");
         } else {
           setIdx(nextIdx);
+          console.log(`➡️ Avanzando a letra ${nextIdx + 1}`);
         }
 
         // Resetear estado para la siguiente letra (la cámara sigue activa)
+        console.log("🔄 Reseteando estado para siguiente letra...");
         resetScoreForCurrent();
-      }, 1500);
+      }, 3000); // Aumentado a 3 segundos
     }
-  }, [items, idx, onProgressUpdate]);
+  }, [items, idx, onProgressUpdate, resetScoreForCurrent]);
 
   // Funciones para el flujo heurístico
   const startCapture = useCallback(() => {
@@ -687,15 +695,20 @@ function AbecedarioTestModal({
     // Marcar componente como montado
     mountedRef.current = true;
     console.log("🔵 [useEffect open] Modal abierto, llamando startCamera()...");
-    startCamera(); // startCamera tiene su propio lock interno
+
+    // Solo iniciar cámara si no está ya inicializada
+    if (!cameraReadyRef.current) {
+      startCamera();
+    } else {
+      console.log("⚠️ [useEffect open] Cámara ya está inicializada, no reiniciar");
+    }
 
     // Cleanup solo cuando se cierra el modal
     return () => {
       console.log("🔴 [useEffect open] Modal cerrado, limpiando...");
       cleanup();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]); // Solo depender de 'open' para evitar re-iniciar la cámara
+  }, [open, startCamera, cleanup]);
 
   if (!open) return null;
 
