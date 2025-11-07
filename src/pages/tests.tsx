@@ -115,6 +115,7 @@ function AbecedarioTestModal({
   const templatesRef = useRef<Template[]>([]);
   const templateDictRef = useRef<TemplateDict>({});
   const mountedRef = useRef(true); // Para saber si el componente está montado
+  const forceRejectNextRef = useRef(false); // Para demo: forzar rechazo en siguiente análisis
   const [heuristicResult, setHeuristicResult] = useState<{ score: number; decision: string; distance: number } | null>(null);
 
   // Cargar imágenes del abecedario desde Firebase
@@ -181,71 +182,102 @@ function AbecedarioTestModal({
     console.log("⏳ Analizando frames capturados...");
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    // ⭐ MODO DEMO: Generar resultado ficticio exitoso
-    // Puntaje aleatorio entre 72-95% para parecer realista
-    const fakeScore = Math.floor(Math.random() * (95 - 72 + 1)) + 72;
-    const fakeDistance = (Math.random() * 0.15).toFixed(4); // 0.00 - 0.15
+    // ⭐ MODO DEMO: Verificar si debemos forzar rechazo (para demostración)
+    const shouldReject = forceRejectNextRef.current;
 
-    console.log(`\n📈 RESULTADO DEMO (FICTICIO):`);
-    console.log(`   Score: ${fakeScore}%`);
-    console.log(`   Decision: accepted`);
-    console.log(`   Distance: ${fakeDistance}`);
-    console.log(`   Frames capturados: ${captured.length}`);
-    console.log(`======================================\n`);
+    if (shouldReject) {
+      // 🎭 DEMO: Generar resultado RECHAZADO
+      console.log("🎭 MODO DEMO: Forzando rechazo para demostración");
+      const lowScore = Math.floor(Math.random() * (45 - 30 + 1)) + 30; // 30-45%
+      const highDistance = (Math.random() * (0.8 - 0.5) + 0.5).toFixed(4); // 0.5-0.8
 
-    setScore(fakeScore);
-    setHeuristicResult({
-      score: fakeScore,
-      decision: "accepted",
-      distance: parseFloat(fakeDistance),
-    });
-    setHeuristicState("result");
-    heuristicStateRef.current = "result";
+      console.log(`\n📈 RESULTADO DEMO (RECHAZADO):`);
+      console.log(`   Score: ${lowScore}%`);
+      console.log(`   Decision: rejected`);
+      console.log(`   Distance: ${highDistance}`);
+      console.log(`   Frames capturados: ${captured.length}`);
+      console.log(`======================================\n`);
 
-    // Siempre es correcto en modo demo
-    setCorrect(true);
-
-    console.log("💾 Registrando intento en base de datos...");
-
-    // Registrar en DB
-    registrarIntento("abecedario", fakeScore, true)
-      .then((response) => {
-        console.log("✅ Intento registrado:", response);
-        if (response.coinEarned) {
-          console.log("🪙 +1 moneda ganada!");
-        }
-        // Actualizar barra de progreso
-        if (onProgressUpdate) {
-          console.log("📊 Actualizando barra de progreso...");
-          onProgressUpdate();
-        }
-      })
-      .catch((err) => {
-        console.error("❌ Error al registrar intento:", err);
+      setScore(lowScore);
+      setHeuristicResult({
+        score: lowScore,
+        decision: "rejected",
+        distance: parseFloat(highDistance),
       });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
+      setCorrect(false);
 
-    // Auto-avanzar a la siguiente letra después de 3 segundos (para que se vea el resultado)
-    console.log("⏱️ Esperando 3 segundos antes de avanzar...");
-    if (!autoNextRef.current) {
-      autoNextRef.current = window.setTimeout(() => {
-        autoNextRef.current = null;
+      // Limpiar flag
+      forceRejectNextRef.current = false;
 
-        console.log("⏰ Timeout completado, avanzando a siguiente letra...");
+      console.log("❌ Seña rechazada - NO se registra en DB");
+      // NO registrar en DB ni auto-avanzar cuando es rechazado
 
-        // Avanzar al siguiente índice
-        const nextIdx = idx + 1;
-        if (nextIdx >= items.length) {
-          setIdx(0);
-          console.log("🎉 ¡Completaste todas las letras! Comenzando de nuevo...");
-        } else {
-          setIdx(nextIdx);
-          console.log(`➡️ Avanzando a letra ${nextIdx + 1}`);
-        }
+    } else {
+      // ✅ DEMO: Generar resultado APROBADO
+      const fakeScore = Math.floor(Math.random() * (95 - 72 + 1)) + 72; // 72-95%
+      const fakeDistance = (Math.random() * 0.15).toFixed(4); // 0.00 - 0.15
 
-        // Resetear estado para la siguiente letra (la cámara sigue activa)
-        console.log("🔄 Reseteando estado para siguiente letra...");
-        resetScoreForCurrent();
-      }, 3000); // Aumentado a 3 segundos
+      console.log(`\n📈 RESULTADO DEMO (APROBADO):`);
+      console.log(`   Score: ${fakeScore}%`);
+      console.log(`   Decision: accepted`);
+      console.log(`   Distance: ${fakeDistance}`);
+      console.log(`   Frames capturados: ${captured.length}`);
+      console.log(`======================================\n`);
+
+      setScore(fakeScore);
+      setHeuristicResult({
+        score: fakeScore,
+        decision: "accepted",
+        distance: parseFloat(fakeDistance),
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
+      setCorrect(true);
+
+      console.log("💾 Registrando intento en base de datos...");
+
+      // Registrar en DB
+      registrarIntento("abecedario", fakeScore, true)
+        .then((response) => {
+          console.log("✅ Intento registrado:", response);
+          if (response.coinEarned) {
+            console.log("🪙 +1 moneda ganada!");
+          }
+          // Actualizar barra de progreso
+          if (onProgressUpdate) {
+            console.log("📊 Actualizando barra de progreso...");
+            onProgressUpdate();
+          }
+        })
+        .catch((err) => {
+          console.error("❌ Error al registrar intento:", err);
+        });
+
+      // Auto-avanzar a la siguiente letra después de 3 segundos (para que se vea el resultado)
+      console.log("⏱️ Esperando 3 segundos antes de avanzar...");
+      if (!autoNextRef.current) {
+        autoNextRef.current = window.setTimeout(() => {
+          autoNextRef.current = null;
+
+          console.log("⏰ Timeout completado, avanzando a siguiente letra...");
+
+          // Avanzar al siguiente índice
+          const nextIdx = idx + 1;
+          if (nextIdx >= items.length) {
+            setIdx(0);
+            console.log("🎉 ¡Completaste todas las letras! Comenzando de nuevo...");
+          } else {
+            setIdx(nextIdx);
+            console.log(`➡️ Avanzando a letra ${nextIdx + 1}`);
+          }
+
+          // Resetear estado para la siguiente letra (la cámara sigue activa)
+          console.log("🔄 Reseteando estado para siguiente letra...");
+          resetScoreForCurrent();
+        }, 3000); // Aumentado a 3 segundos
+      }
     }
   }, [items, idx, onProgressUpdate, resetScoreForCurrent]);
 
@@ -761,6 +793,10 @@ function AbecedarioTestModal({
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <button
               onClick={() => {
+                // 🎭 DEMO: Marcar que la próxima seña debe ser rechazada
+                forceRejectNextRef.current = true;
+                console.log("🎭 DEMO: Botón 'Siguiente →' presionado - próxima seña será RECHAZADA");
+
                 const nextIdx = idx + 1;
                 if (nextIdx >= items.length) {
                   setIdx(0);
@@ -769,7 +805,7 @@ function AbecedarioTestModal({
                 }
                 resetScoreForCurrent();
               }}
-              title="Saltar a la siguiente letra"
+              title="Saltar a la siguiente letra (la siguiente será rechazada para demo)"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -892,9 +928,14 @@ function AbecedarioTestModal({
               </div>
 
               <button
-                onClick={() =>
-                  setIdx((p) => (items.length ? Math.min(p + 1, items.length - 1) : p))
-                }
+                onClick={() => {
+                  // 🎭 DEMO: Marcar que la próxima seña debe ser rechazada
+                  forceRejectNextRef.current = true;
+                  console.log("🎭 DEMO: Botón 'Siguiente' presionado - próxima seña será RECHAZADA");
+
+                  setIdx((p) => (items.length ? Math.min(p + 1, items.length - 1) : p));
+                  resetScoreForCurrent();
+                }}
                 disabled={items.length === 0 || idx === items.length - 1}
                 style={{
                   display: "inline-flex",
