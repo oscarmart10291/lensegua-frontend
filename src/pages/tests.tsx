@@ -103,6 +103,7 @@ function AbecedarioTestModal({
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
+  const cameraReadyRef = useRef(false); // Para saber si la cámara está lista
 
   // Sistema heurístico - Estados y refs
   type HeuristicState = "idle" | "countdown" | "capturing" | "analyzing" | "result";
@@ -241,7 +242,7 @@ function AbecedarioTestModal({
       setHeuristicState("result");
       heuristicStateRef.current = "result";
 
-      // Si es correcto, registrar en DB y auto-avanzar
+      // Si es correcto, registrar en DB (sin auto-avance)
       if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE) {
         setCorrect(true);
 
@@ -251,27 +252,15 @@ function AbecedarioTestModal({
             if (response.coinEarned) {
               console.log("🪙 +1 moneda ganada!");
             }
+            // Actualizar barra de progreso
             if (onProgressUpdate) {
+              console.log("📊 Actualizando barra de progreso...");
               onProgressUpdate();
             }
           })
           .catch((err) => {
             console.error("❌ Error al registrar intento:", err);
           });
-
-        // Auto-avanzar a la siguiente letra después de 2 segundos
-        autoNextRef.current = window.setTimeout(() => {
-          autoNextRef.current = null;
-          setCorrect(false);
-          setIdx((p) => {
-            const nextIdx = p + 1;
-            if (nextIdx >= items.length) {
-              alert("¡Test finalizado! ✅");
-              return p;
-            }
-            return nextIdx;
-          });
-        }, 2000);
       }
     } catch (err) {
       console.error("❌ Error en análisis heurístico:", err);
@@ -329,6 +318,19 @@ function AbecedarioTestModal({
     startHeuristicCountdown();
   }, [startHeuristicCountdown]);
 
+  const goToNextLetter = useCallback(() => {
+    setCorrect(false);
+    setHeuristicResult(null);
+    setIdx((p) => {
+      const nextIdx = p + 1;
+      if (nextIdx >= items.length) {
+        alert("¡Test finalizado! ✅");
+        return p;
+      }
+      return nextIdx;
+    });
+  }, [items.length]);
+
   // Cargar plantillas heurísticas cuando cambia la letra
   useEffect(() => {
     if (!open) return;
@@ -354,10 +356,21 @@ function AbecedarioTestModal({
         templateDictRef.current[currentLabel] = templates;
         console.log(`✅ ${templates.length} plantillas cargadas para "${currentLabel}"`);
 
-        // Iniciar countdown INMEDIATAMENTE después de cargar la letra actual
+        // Esperar a que la cámara esté lista antes de iniciar countdown
         if (!active) return;
-        console.log(`🚀 Iniciando countdown para letra "${currentLabel}"`);
-        startHeuristicCountdown();
+
+        // Esperar hasta que la cámara esté lista
+        const waitForCamera = () => {
+          if (cameraReadyRef.current) {
+            console.log(`🚀 Iniciando countdown para letra "${currentLabel}"`);
+            startHeuristicCountdown();
+          } else {
+            console.log(`⏳ Esperando a que la cámara esté lista...`);
+            setTimeout(waitForCamera, 100);
+          }
+        };
+
+        waitForCamera();
 
         // Pre-cargar otras letras en segundo plano (lazy loading)
         if (active) {
@@ -484,8 +497,13 @@ function AbecedarioTestModal({
         rafRef.current = requestAnimationFrame(processFrame);
       };
       rafRef.current = requestAnimationFrame(processFrame);
+
+      // Marcar cámara como lista
+      cameraReadyRef.current = true;
+      console.log("✅ Cámara inicializada correctamente");
     } catch (err) {
       console.error(err);
+      cameraReadyRef.current = false;
       alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
     }
   }, []);
@@ -866,26 +884,46 @@ function AbecedarioTestModal({
                   </div>
                   <div style={{ fontSize: 14, opacity: 0.8, marginBottom: 24 }}>
                     {heuristicResult.decision === "accepted"
-                      ? "¡Excelente! Avanzando a la siguiente letra..."
+                      ? "¡Excelente! Presiona Siguiente para continuar"
                       : "Intenta de nuevo"}
                   </div>
-                  {heuristicResult.decision !== "accepted" && (
-                    <button
-                      onClick={retryHeuristic}
-                      style={{
-                        padding: "12px 24px",
-                        borderRadius: 8,
-                        background: "#2563eb",
-                        border: "1px solid #1e40af",
-                        color: "white",
-                        fontSize: 14,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Intentar de nuevo
-                    </button>
-                  )}
+
+                  {/* Botones según el resultado */}
+                  <div style={{ display: "flex", gap: 12 }}>
+                    {heuristicResult.decision === "accepted" ? (
+                      <button
+                        onClick={goToNextLetter}
+                        style={{
+                          padding: "12px 24px",
+                          borderRadius: 8,
+                          background: "#16a34a",
+                          border: "1px solid #15803d",
+                          color: "white",
+                          fontSize: 14,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Siguiente →
+                      </button>
+                    ) : (
+                      <button
+                        onClick={retryHeuristic}
+                        style={{
+                          padding: "12px 24px",
+                          borderRadius: 8,
+                          background: "#2563eb",
+                          border: "1px solid #1e40af",
+                          color: "white",
+                          fontSize: 14,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Intentar de nuevo
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
