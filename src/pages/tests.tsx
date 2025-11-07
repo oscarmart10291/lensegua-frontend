@@ -85,14 +85,17 @@ function AbecedarioTestModal({
   open,
   onClose,
   onProgressUpdate,
+  currentIndex,
+  onIndexChange,
 }: {
   open: boolean;
   onClose: () => void;
   onProgressUpdate?: () => void;
+  currentIndex: number;
+  onIndexChange: (newIndex: number) => void;
 }) {
   const [items, setItems] = useState<AbcMediaItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [idx, setIdx] = useState(0);
 
   // Estado de detección
   const [score, setScore] = useState(0); // 0..100
@@ -133,7 +136,6 @@ function AbecedarioTestModal({
           (it) => (it.kind ? it.kind === "image" : /\.(png|jpe?g|webp|gif)(\?|$)/i.test(it.url))
         );
         setItems(onlyImages.slice(0, MAX_ITEMS));
-        setIdx(0);
       })
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
@@ -169,7 +171,7 @@ function AbecedarioTestModal({
   // Analizar secuencia capturada con el sistema heurístico
   const analyzeCapture = useCallback(async () => {
     const captured = capturedFramesRef.current;
-    const currentLabel = items[idx]?.label;
+    const currentLabel = items[currentIndex]?.label;
 
     console.log(`\n======================================`);
     console.log(`🔍 ANÁLISIS DE SEÑA: "${currentLabel}"`);
@@ -246,7 +248,7 @@ function AbecedarioTestModal({
       setHeuristicState("result");
       heuristicStateRef.current = "result";
 
-      // Si es correcto, registrar en DB (sin auto-avance)
+      // Si es correcto, registrar en DB y cerrar modal automáticamente
       if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE) {
         setCorrect(true);
 
@@ -265,6 +267,26 @@ function AbecedarioTestModal({
           .catch((err) => {
             console.error("❌ Error al registrar intento:", err);
           });
+
+        // Auto-cerrar modal y avanzar a la siguiente letra después de mostrar el resultado
+        if (!autoNextRef.current) {
+          autoNextRef.current = window.setTimeout(() => {
+            autoNextRef.current = null;
+
+            // Avanzar al siguiente índice
+            const nextIdx = currentIndex + 1;
+            if (nextIdx >= items.length) {
+              // Si terminamos todas las letras, reiniciar desde el principio
+              onIndexChange(0);
+              alert("¡Has completado todas las letras! 🎉 Comenzando de nuevo...");
+            } else {
+              onIndexChange(nextIdx);
+            }
+
+            // Cerrar el modal
+            onClose();
+          }, 1200);
+        }
       }
     } catch (err) {
       console.error("❌ Error en análisis heurístico:", err);
@@ -276,7 +298,7 @@ function AbecedarioTestModal({
       setHeuristicState("result");
       heuristicStateRef.current = "result";
     }
-  }, [items, idx, onProgressUpdate]);
+  }, [items, currentIndex, onProgressUpdate, onIndexChange, onClose]);
 
   // Funciones para el flujo heurístico
   const startCapture = useCallback(() => {
@@ -386,15 +408,14 @@ function AbecedarioTestModal({
       console.error(`❌ Error cargando plantillas para "${nextLabel}":`, err);
       alert("Error al cargar las plantillas. Intenta de nuevo.");
     }
-  }, [idx, items, startHeuristicCountdown]);
+  }, [currentIndex, items, startHeuristicCountdown]);
 
-  // Cargar plantillas SOLO para la primera letra cuando se abre el modal
-  // Ya NO se vuelve a ejecutar cuando cambia idx (eso lo hace goToNextLetter)
+  // Cargar plantillas cuando se abre el modal o cuando cambia currentIndex
   useEffect(() => {
     if (!open) return;
     if (items.length === 0) return; // Esperar a que items se carguen
 
-    const currentLabel = items[idx]?.label;
+    const currentLabel = items[currentIndex]?.label;
     if (!currentLabel) return;
 
     let active = true;
@@ -476,8 +497,7 @@ function AbecedarioTestModal({
         countdownTimerRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, items.length]); // SOLO cuando se abre el modal o se cargan items - NO cuando cambia idx
+  }, [open, items.length, currentIndex]); // Se ejecuta cuando se abre el modal, se cargan items o cambia el índice
 
   // Función de inicialización separada (se ejecuta UNA SOLA VEZ)
   const initializeCamera = useCallback(async () => {
@@ -766,8 +786,8 @@ function AbecedarioTestModal({
                 <span style={{ opacity: 0.8 }}>No hay imágenes en Firebase.</span>
               ) : (
                 <img
-                  src={items[idx]?.url}
-                  alt={items[idx]?.label || `Imagen ${idx + 1}`}
+                  src={items[currentIndex]?.url}
+                  alt={items[currentIndex]?.label || `Imagen ${currentIndex + 1}`}
                   style={{
                     maxWidth: "100%",
                     maxHeight: "100%",
@@ -789,8 +809,8 @@ function AbecedarioTestModal({
               }}
             >
               <button
-                onClick={() => setIdx((p) => (p > 0 ? p - 1 : p))}
-                disabled={idx === 0 || items.length === 0}
+                onClick={() => onIndexChange(currentIndex > 0 ? currentIndex - 1 : currentIndex)}
+                disabled={currentIndex === 0 || items.length === 0}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -800,7 +820,7 @@ function AbecedarioTestModal({
                   background: "#111827",
                   border: "1px solid #1f2937",
                   color: "#e5e7eb",
-                  cursor: idx === 0 || items.length === 0 ? "not-allowed" : "pointer",
+                  cursor: currentIndex === 0 || items.length === 0 ? "not-allowed" : "pointer",
                 }}
               >
                 <Left size={16} /> Anterior
@@ -808,15 +828,15 @@ function AbecedarioTestModal({
 
               <div style={{ marginLeft: "auto" }}>
                 <span style={{ fontSize: 12, opacity: 0.8 }}>
-                  {items.length ? `${idx + 1} / ${items.length}` : "—"}
+                  {items.length ? `${currentIndex + 1} / ${items.length}` : "—"}
                 </span>
               </div>
 
               <button
                 onClick={() =>
-                  setIdx((p) => (items.length ? Math.min(p + 1, items.length - 1) : p))
+                  onIndexChange(items.length ? Math.min(currentIndex + 1, items.length - 1) : currentIndex)
                 }
-                disabled={items.length === 0 || idx === items.length - 1}
+                disabled={items.length === 0 || currentIndex === items.length - 1}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -827,7 +847,7 @@ function AbecedarioTestModal({
                   border: "1px solid #1e40af",
                   color: "white",
                   cursor:
-                    items.length === 0 || idx === items.length - 1 ? "not-allowed" : "pointer",
+                    items.length === 0 || currentIndex === items.length - 1 ? "not-allowed" : "pointer",
                 }}
               >
                 Siguiente <Right size={16} />
@@ -929,7 +949,7 @@ function AbecedarioTestModal({
                     ¡Ahora!
                   </div>
                   <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
-                    Realiza la seña de <strong>{items[idx]?.label}</strong>
+                    Realiza la seña de <strong>{items[currentIndex]?.label}</strong>
                   </div>
                   <div style={{ fontSize: 12, opacity: 0.7 }}>
                     Capturando... {capturedFramesRef.current.length} frames
@@ -1158,6 +1178,7 @@ export default function TestsPage() {
   const [stats, setStats] = useState<UserStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAbcModal, setShowAbcModal] = useState(false);
+  const [abcCurrentIndex, setAbcCurrentIndex] = useState(0);
 
   // Cargar estadísticas del usuario
   const loadStats = useCallback(async () => {
@@ -1361,6 +1382,8 @@ export default function TestsPage() {
         open={showAbcModal}
         onClose={() => setShowAbcModal(false)}
         onProgressUpdate={loadStats}
+        currentIndex={abcCurrentIndex}
+        onIndexChange={setAbcCurrentIndex}
       />
     </>
   );
