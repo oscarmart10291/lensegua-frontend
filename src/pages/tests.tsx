@@ -24,6 +24,10 @@ import { getAbecedarioMaybe as getAbecedarioUrls, AbcMediaItem } from "../lib/st
 import { Hands, HAND_CONNECTIONS, Results } from "@mediapipe/hands";
 import { drawConnectors, drawLandmarks } from "@mediapipe/drawing_utils";
 
+// 👇 API para progreso y monedas
+import { getUserStats, registrarIntento, UserStats, ModuleProgress as APIModuleProgress } from "../lib/api";
+import { useAuth } from "../auth/AuthContext";
+
 type MedalTier = "none" | "bronze" | "silver" | "gold";
 
 export type ModuleProgress = {
@@ -53,9 +57,11 @@ const MAX_ITEMS = 21; // mostramos hasta 21 imágenes
 function AbecedarioTestModal({
   open,
   onClose,
+  onProgressUpdate,
 }: {
   open: boolean;
   onClose: () => void;
+  onProgressUpdate?: () => void;
 }) {
   const [items, setItems] = useState<AbcMediaItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -179,6 +185,23 @@ function AbecedarioTestModal({
             if (next >= target && !correct) {
               // Marcamos correcto y pasamos a la siguiente
               setCorrect(true);
+
+              // 🎯 Registrar intento en la base de datos
+              registrarIntento('abecedario', next, true)
+                .then((response) => {
+                  console.log('✅ Intento registrado:', response);
+                  if (response.coinEarned) {
+                    console.log('🪙 +1 moneda ganada!');
+                  }
+                  // Actualizar progreso en la UI principal
+                  if (onProgressUpdate) {
+                    onProgressUpdate();
+                  }
+                })
+                .catch((err) => {
+                  console.error('❌ Error al registrar intento:', err);
+                });
+
               if (!autoNextRef.current) {
                 autoNextRef.current = window.setTimeout(() => {
                   autoNextRef.current = null;
@@ -589,34 +612,70 @@ function AbecedarioTestModal({
 
 // =================== Página principal ===================
 export default function TestsPage() {
-  // Construimos los módulos a partir de MODULES, todo en cero
-  const modules: ModuleProgress[] = useMemo(
-    () =>
-      MODULES.map((m) => ({
+  const { user } = useAuth();
+  const [stats, setStats] = useState<UserStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showAbcModal, setShowAbcModal] = useState(false);
+
+  // Cargar estadísticas del usuario
+  const loadStats = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      setLoading(true);
+      const data = await getUserStats();
+      setStats(data);
+    } catch (error) {
+      console.error('Error al cargar estadísticas:', error);
+      // Inicializar con valores por defecto si hay error
+      setStats({
+        totalCoins: 0,
+        completed: 0,
+        medals: { gold: 0, silver: 0, bronze: 0 },
+        modules: [],
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
+
+  // Construir módulos combinando MODULES con el progreso de la API
+  const modules: ModuleProgress[] = useMemo(() => {
+    if (!stats) {
+      // Si no hay stats, retornar módulos en cero
+      return MODULES.map((m) => ({
         id: m.key,
         name: m.title,
         subtitle: m.subtitle,
         progress: 0,
         attempts: 0,
         bestScore: 0,
-        medal: "none",
+        medal: "none" as MedalTier,
         coinsEarned: 0,
         locked: false,
-      })),
-    []
-  );
+      }));
+    }
 
-  // Stats en cero
-  const stats = useMemo(
-    () => ({
-      totalCoins: 0,
-      completed: 0,
-      medals: { gold: 0, silver: 0, bronze: 0 },
-    }),
-    []
-  );
-
-  const [showAbcModal, setShowAbcModal] = useState(false);
+    // Combinar información de MODULES con progreso de la API
+    return MODULES.map((m) => {
+      const apiProgress = stats.modules.find((mp) => mp.id === m.key);
+      return {
+        id: m.key,
+        name: m.title,
+        subtitle: m.subtitle,
+        progress: apiProgress?.progress || 0,
+        attempts: apiProgress?.attempts || 0,
+        bestScore: apiProgress?.bestScore || 0,
+        medal: (apiProgress?.medal || "none") as MedalTier,
+        coinsEarned: apiProgress?.coinsEarned || 0,
+        locked: false,
+      };
+    });
+  }, [stats]);
 
   const onAction = (m: ModuleProgress) => {
     const isAbc = m.id.toLowerCase() === "abecedario" || m.name.toLowerCase() === "abecedario";
@@ -626,6 +685,26 @@ export default function TestsPage() {
       alert("Pronto disponible para este módulo.");
     }
   };
+
+  // Mostrar loading mientras se cargan los datos
+  if (loading) {
+    return (
+      <>
+        <Navbar />
+        <main className={`${s.wrapper} ${s.withNavbar}`}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            minHeight: '60vh',
+            color: '#e5e7eb'
+          }}>
+            <p>Cargando estadísticas...</p>
+          </div>
+        </main>
+      </>
+    );
+  }
 
   return (
     <>
@@ -644,7 +723,7 @@ export default function TestsPage() {
               <div className={s.statIconWrap}><Coins aria-hidden /></div>
               <div className={s.statMeta}>
                 <span className={s.statLabel}>Monedas</span>
-                <span className={s.statValue}>{stats.totalCoins}</span>
+                <span className={s.statValue}>{stats?.totalCoins || 0}</span>
               </div>
             </div>
 
@@ -652,7 +731,7 @@ export default function TestsPage() {
               <div className={s.statIconWrap}><Trophy aria-hidden /></div>
               <div className={s.statMeta}>
                 <span className={s.statLabel}>Módulos completados</span>
-                <span className={s.statValue}>{stats.completed}</span>
+                <span className={s.statValue}>{stats?.completed || 0}</span>
               </div>
             </div>
 
@@ -665,7 +744,7 @@ export default function TestsPage() {
               <div className={s.statMeta}>
                 <span className={s.statLabel}>Medallas</span>
                 <span className={s.statValueSm}>
-                  <b>{stats.medals.gold}</b> oro · <b>{stats.medals.silver}</b> plata · <b>{stats.medals.bronze}</b> bronce
+                  <b>{stats?.medals.gold || 0}</b> oro · <b>{stats?.medals.silver || 0}</b> plata · <b>{stats?.medals.bronze || 0}</b> bronce
                 </span>
               </div>
             </div>
@@ -686,21 +765,21 @@ export default function TestsPage() {
                   </div>
 
                   <div className={s.rewardArea}>
-                    <span className={s.badgeMuted}>{medalLabel("none")}</span>
+                    <span className={s.badgeMuted}>{medalLabel(m.medal)}</span>
                   </div>
                 </div>
 
-                <div className={s.progressRow} aria-label="Progreso 0%">
+                <div className={s.progressRow} aria-label={`Progreso ${Math.round(m.progress)}%`}>
                   <div className={s.progressBar}>
-                    <div className={s.progressFill} style={{ width: "0%" }} />
+                    <div className={s.progressFill} style={{ width: `${m.progress}%` }} />
                   </div>
-                  <span className={s.progressLabel}>0%</span>
+                  <span className={s.progressLabel}>{Math.round(m.progress)}%</span>
                 </div>
 
                 <div className={s.metaRow}>
-                  <span className={s.pill}>Intentos: <b>0</b></span>
-                  <span className={s.pill}>Mejor: <b>0%</b></span>
-                  <span className={s.pill}><Coins size={14} /> 0</span>
+                  <span className={s.pill}>Intentos: <b>{m.attempts}</b></span>
+                  <span className={s.pill}>Mejor: <b>{Math.round(m.bestScore)}%</b></span>
+                  <span className={s.pill}><Coins size={14} /> {m.coinsEarned}</span>
                 </div>
 
                 <div className={s.actionRow}>
@@ -722,7 +801,11 @@ export default function TestsPage() {
       </main>
 
       {/* Modal del Abecedario */}
-      <AbecedarioTestModal open={showAbcModal} onClose={() => setShowAbcModal(false)} />
+      <AbecedarioTestModal
+        open={showAbcModal}
+        onClose={() => setShowAbcModal(false)}
+        onProgressUpdate={loadStats}
+      />
     </>
   );
 }
