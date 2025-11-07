@@ -43,6 +43,9 @@ import { useAuth } from "../auth/AuthContext";
 type MedalTier = "none" | "bronze" | "silver" | "gold";
 type MPPoint = { x: number; y: number; z?: number };
 
+// SOLUCIÓN DEFINITIVA: Promesa compartida a nivel de módulo para evitar doble inicialización
+let cameraInitPromise: Promise<MediaStream> | null = null;
+
 export type ModuleProgress = {
   id: string;
   name: string;
@@ -104,7 +107,6 @@ function AbecedarioTestModal({
   const rafRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const cameraReadyRef = useRef(false); // Para saber si la cámara está lista
-  const cameraInitializingRef = useRef(false); // Para evitar múltiples llamadas a startCamera
 
   // Sistema heurístico - Estados y refs
   type HeuristicState = "idle" | "countdown" | "capturing" | "analyzing" | "result";
@@ -479,22 +481,35 @@ function AbecedarioTestModal({
 
   // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
-    // LOCK SÍNCRONO - PRIMERA LÍNEA: verificar y establecer flag atómicamente
-    if (cameraInitializingRef.current || cameraReadyRef.current) {
-      console.log(`⚠️ [startCamera] BLOQUEADO: init=${cameraInitializingRef.current}, ready=${cameraReadyRef.current}`);
+    // Verificar si ya está lista
+    if (cameraReadyRef.current) {
+      console.log("⚠️ [startCamera] Cámara ya está lista");
       return;
     }
 
-    // Establecer flag INMEDIATAMENTE (antes de cualquier await)
-    cameraInitializingRef.current = true;
-    console.log("🔒 [startCamera] Lock adquirido, iniciando...");
+    // Si ya hay una inicialización en curso, esperar a que termine
+    if (cameraInitPromise) {
+      console.log("⏳ [startCamera] Esperando inicialización en curso...");
+      try {
+        await cameraInitPromise;
+        console.log("✅ [startCamera] Inicialización compartida completada");
+        return;
+      } catch (err) {
+        console.log("⚠️ [startCamera] Inicialización compartida falló, reintentando...");
+        cameraInitPromise = null; // Resetear para permitir retry
+      }
+    }
+
+    // Crear la promesa compartida
+    console.log("🔒 [startCamera] Creando nueva inicialización...");
+    cameraInitPromise = navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
 
     try {
       console.log("📷 Solicitando acceso a cámara...");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
+      const stream = await cameraInitPromise;
       console.log("✅ Stream de cámara obtenido");
       streamRef.current = stream;
 
@@ -575,14 +590,14 @@ function AbecedarioTestModal({
 
       // Marcar cámara como lista
       cameraReadyRef.current = true;
-      cameraInitializingRef.current = false; // Ya terminó de inicializar
       console.log("✅✅✅ Cámara COMPLETAMENTE inicializada y lista para usar ✅✅✅");
     } catch (err) {
       console.error("❌ Error en startCamera:", err);
-      // IMPORTANTE: Resetear flags en caso de error para permitir retry
+      // Limpiar promesa y flags para permitir retry
+      cameraInitPromise = null;
       cameraReadyRef.current = false;
-      cameraInitializingRef.current = false;
       alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
+      throw err; // Re-throw para que la promesa se rechace
     }
   }, []);
 
@@ -613,9 +628,11 @@ function AbecedarioTestModal({
       countdownTimerRef.current = null;
     }
 
+    // Limpiar promesa compartida a nivel de módulo
+    cameraInitPromise = null;
+
     // Resetear flags de cámara
     cameraReadyRef.current = false;
-    cameraInitializingRef.current = false;
 
     // Limpiar estado heurístico
     setHeuristicState("idle");
