@@ -158,10 +158,11 @@ function AbecedarioTestModal({
     }
   }, []);
 
+  // Resetear score solo cuando se abre el modal (NO cuando cambia idx)
   useEffect(() => {
     if (!open) return;
     resetScoreForCurrent();
-  }, [open, idx, resetScoreForCurrent]);
+  }, [open, resetScoreForCurrent]);
 
   // Analizar secuencia capturada con el sistema heurístico
   const analyzeCapture = useCallback(async () => {
@@ -319,34 +320,88 @@ function AbecedarioTestModal({
     startHeuristicCountdown();
   }, [startHeuristicCountdown]);
 
-  const goToNextLetter = useCallback(() => {
+  const goToNextLetter = useCallback(async () => {
+    console.log("➡️ Avanzando a la siguiente letra...");
+
+    // Resetear estados visuales
     setCorrect(false);
     setHeuristicResult(null);
-    setIdx((p) => {
-      const nextIdx = p + 1;
-      if (nextIdx >= items.length) {
-        alert("¡Test finalizado! ✅");
-        return p;
-      }
-      return nextIdx;
-    });
-  }, [items.length]);
+    setHeuristicState("idle");
+    heuristicStateRef.current = "idle";
+    capturedFramesRef.current = [];
 
-  // Cargar plantillas heurísticas cuando cambia la letra
-  // IMPORTANTE: Solo se ejecuta cuando cambia idx, NO cuando se abre el modal
+    // Incrementar índice
+    const nextIdx = idx + 1;
+    if (nextIdx >= items.length) {
+      alert("¡Test finalizado! ✅");
+      return;
+    }
+
+    setIdx(nextIdx);
+    const nextLabel = items[nextIdx]?.label;
+
+    if (!nextLabel) {
+      console.error("❌ No se pudo obtener la siguiente letra");
+      return;
+    }
+
+    console.log(`🔄 Cargando plantillas para la nueva letra: "${nextLabel}"`);
+
+    try {
+      // Cargar plantillas de la nueva letra
+      const templates = await loadTemplatesForLetter(
+        HEURISTIC_CFG.TEMPLATES_PATH,
+        nextLabel,
+        HEURISTIC_CFG.MAX_TEMPLATES_PER_LETTER
+      );
+
+      templatesRef.current = templates;
+      templateDictRef.current[nextLabel] = templates;
+      console.log(`✅ ${templates.length} plantillas cargadas para "${nextLabel}"`);
+
+      // Pre-cargar impostores en segundo plano
+      const allLetters = items.map(it => it.label).filter(Boolean);
+      const otherLetters = allLetters.filter(l => l !== nextLabel);
+      const toPreload = otherLetters.slice(0, 5);
+
+      console.log(`📚 Pre-cargando ${toPreload.length} letras adicionales...`);
+      for (const letter of toPreload) {
+        if (!templateDictRef.current[letter]) {
+          const letterTemplates = await loadTemplatesForLetter(
+            HEURISTIC_CFG.TEMPLATES_PATH,
+            letter,
+            HEURISTIC_CFG.MAX_TEMPLATES_IMPOSTOR
+          );
+          templateDictRef.current[letter] = letterTemplates;
+        }
+      }
+
+      // La cámara ya está corriendo, solo iniciar countdown
+      console.log("✅ Plantillas listas, iniciando countdown...");
+      startHeuristicCountdown();
+
+    } catch (err) {
+      console.error(`❌ Error cargando plantillas para "${nextLabel}":`, err);
+      alert("Error al cargar las plantillas. Intenta de nuevo.");
+    }
+  }, [idx, items, startHeuristicCountdown]);
+
+  // Cargar plantillas SOLO para la primera letra cuando se abre el modal
+  // Ya NO se vuelve a ejecutar cuando cambia idx (eso lo hace goToNextLetter)
   useEffect(() => {
     if (!open) return;
+    if (items.length === 0) return; // Esperar a que items se carguen
+
     const currentLabel = items[idx]?.label;
     if (!currentLabel) return;
-    if (items.length === 0) return; // Esperar a que items se carguen
 
     let active = true;
 
     (async () => {
       try {
-        console.log(`🔧 Cargando plantillas para "${currentLabel}"...`);
+        console.log(`🔧 Cargando plantillas iniciales para "${currentLabel}"...`);
 
-        // Cargar solo las plantillas de la letra actual
+        // Cargar solo las plantillas de la letra inicial
         const templates = await loadTemplatesForLetter(
           HEURISTIC_CFG.TEMPLATES_PATH,
           currentLabel,
@@ -360,9 +415,6 @@ function AbecedarioTestModal({
         console.log(`✅ ${templates.length} plantillas cargadas para "${currentLabel}"`);
 
         // Esperar a que la cámara esté lista antes de iniciar countdown
-        if (!active) return;
-
-        // Esperar hasta que la cámara esté lista (máximo 5 segundos)
         let attempts = 0;
         const maxAttempts = 50; // 50 * 100ms = 5 segundos
         const waitForCamera = () => {
@@ -384,19 +436,17 @@ function AbecedarioTestModal({
 
         waitForCamera();
 
-        // Pre-cargar otras letras en segundo plano (lazy loading)
+        // Pre-cargar otras letras en segundo plano
         if (active) {
           const allLetters = items.map(it => it.label).filter(Boolean);
           const otherLetters = allLetters.filter(l => l !== currentLabel);
-
-          // Cargar las primeras 5 letras diferentes para impostores
           const toPreload = otherLetters.slice(0, 5);
-          console.log(`📚 Pre-cargando ${toPreload.length} letras adicionales en segundo plano...`);
+
+          console.log(`📚 Pre-cargando ${toPreload.length} letras adicionales...`);
 
           for (const letter of toPreload) {
             if (!active) break;
             if (!templateDictRef.current[letter]) {
-              // Usar MAX_TEMPLATES_IMPOSTOR para otras letras (igual que lecciones)
               const letterTemplates = await loadTemplatesForLetter(
                 HEURISTIC_CFG.TEMPLATES_PATH,
                 letter,
@@ -425,7 +475,7 @@ function AbecedarioTestModal({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idx, items.length]); // Solo cuando cambia la letra o se cargan los items
+  }, [open, items.length]); // SOLO cuando se abre el modal o se cargan items - NO cuando cambia idx
 
   // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
