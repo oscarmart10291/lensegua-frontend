@@ -271,11 +271,36 @@ function AbecedarioTestModal({
 
       if (videoRef.current && mountedRef.current) {
         videoRef.current.srcObject = stream;
-        try {
-          await videoRef.current.play();
-        } catch (playErr) {
-          console.warn("Error al reproducir video:", playErr);
-          if (!mountedRef.current) return;
+
+        // Intentar reproducir el video con manejo robusto de errores de abort
+        let playAttempts = 0;
+        const maxAttempts = 3;
+
+        while (playAttempts < maxAttempts && mountedRef.current) {
+          try {
+            await videoRef.current.play();
+            console.log("✅ Video reproduciendo correctamente");
+            break; // Éxito, salir del loop
+          } catch (playError: any) {
+            playAttempts++;
+
+            // Si es un error de abort y no hemos alcanzado el máximo de intentos
+            if ((playError.name === 'AbortError' || playError.name === 'DOMException') && playAttempts < maxAttempts) {
+              console.log(`⚠️ Video abortado (intento ${playAttempts}/${maxAttempts}), reintentando en 100ms...`);
+              await new Promise(resolve => setTimeout(resolve, 100));
+
+              // Verificar que el componente sigue montado antes de reintentar
+              if (!mountedRef.current || signal.aborted) {
+                console.log("ℹ️ Componente desmontado, cancelando reintentos");
+                return;
+              }
+              continue;
+            }
+
+            // Si no es un abort error o ya agotamos los intentos, solo continuar sin lanzar error
+            console.log("ℹ️ Error al reproducir video, continuando de todas formas:", playError.name);
+            break;
+          }
         }
       }
 
