@@ -43,9 +43,6 @@ import { useAuth } from "../auth/AuthContext";
 type MedalTier = "none" | "bronze" | "silver" | "gold";
 type MPPoint = { x: number; y: number; z?: number };
 
-// SOLUCIÓN DEFINITIVA: Promesa compartida a nivel de módulo para evitar doble inicialización
-let cameraInitPromise: Promise<void> | null = null;
-
 export type ModuleProgress = {
   id: string;
   name: string;
@@ -267,7 +264,7 @@ function AbecedarioTestModal({
             console.error("❌ Error al registrar intento:", err);
           });
 
-        // Auto-cerrar modal y avanzar a la siguiente letra después de 1.5 segundos
+        // Auto-avanzar a la siguiente letra después de 1.5 segundos (SIN cerrar modal)
         if (!autoNextRef.current) {
           autoNextRef.current = window.setTimeout(() => {
             autoNextRef.current = null;
@@ -276,13 +273,13 @@ function AbecedarioTestModal({
             const nextIdx = idx + 1;
             if (nextIdx >= items.length) {
               setIdx(0);
-              alert("¡Has completado todas las letras! 🎉 Comenzando de nuevo...");
+              console.log("🎉 ¡Completaste todas las letras! Comenzando de nuevo...");
             } else {
               setIdx(nextIdx);
             }
 
-            // Cerrar el modal
-            onClose();
+            // Resetear estado para la siguiente letra (la cámara sigue activa)
+            resetScoreForCurrent();
           }, 1500);
         }
       }
@@ -622,15 +619,16 @@ function AbecedarioTestModal({
       console.log("✅✅✅ Cámara COMPLETAMENTE inicializada y lista para usar ✅✅✅");
     } catch (err) {
       console.error("❌ Error en initializeCamera:", err);
-      // Limpiar promesa y flags para permitir retry
-      cameraInitPromise = null;
       cameraReadyRef.current = false;
-      alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
+
+      if (mountedRef.current) {
+        alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
+      }
       throw err;
     }
   }, []);
 
-  // Wrapper que garantiza una sola inicialización
+  // Wrapper simplificado que garantiza una sola inicialización
   const startCamera = useCallback(async () => {
     // Si ya está lista, no hacer nada
     if (cameraReadyRef.current) {
@@ -638,17 +636,19 @@ function AbecedarioTestModal({
       return;
     }
 
-    // CLAVE: Asignar la promesa de forma sincrónica con el check
-    if (!cameraInitPromise) {
-      console.log("🚀 [startCamera] Primera llamada, creando promesa...");
-      cameraInitPromise = initializeCamera();
-    } else {
-      console.log("⏳ [startCamera] Segunda llamada, esperando promesa existente...");
+    // Verificar que el componente está montado antes de iniciar
+    if (!mountedRef.current) {
+      console.log("⚠️ [startCamera] Componente no montado, cancelando");
+      return;
     }
 
-    // Ambas llamadas esperan la MISMA promesa
-    await cameraInitPromise;
-    console.log("✅ [startCamera] Promesa completada");
+    console.log("🚀 [startCamera] Inicializando cámara por primera vez...");
+    try {
+      await initializeCamera();
+      console.log("✅ [startCamera] Cámara inicializada correctamente");
+    } catch (err) {
+      console.error("❌ [startCamera] Error al inicializar:", err);
+    }
   }, [initializeCamera]);
 
   // Limpieza
@@ -677,9 +677,6 @@ function AbecedarioTestModal({
       window.clearInterval(countdownTimerRef.current);
       countdownTimerRef.current = null;
     }
-
-    // Limpiar promesa compartida a nivel de módulo
-    cameraInitPromise = null;
 
     // Resetear flags de cámara y montaje
     cameraReadyRef.current = false;
@@ -757,7 +754,32 @@ function AbecedarioTestModal({
           <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>
             Prueba: Abecedario (Detección Real)
           </h3>
-          <div style={{ marginLeft: "auto" }}>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <button
+              onClick={() => {
+                const nextIdx = idx + 1;
+                if (nextIdx >= items.length) {
+                  setIdx(0);
+                } else {
+                  setIdx(nextIdx);
+                }
+                resetScoreForCurrent();
+              }}
+              title="Saltar a la siguiente letra"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 10px",
+                borderRadius: 8,
+                background: "#1e3a8a",
+                border: "1px solid #3b82f6",
+                color: "#e5e7eb",
+                cursor: "pointer",
+              }}
+            >
+              Siguiente →
+            </button>
             <button
               onClick={() => {
                 cleanup();
