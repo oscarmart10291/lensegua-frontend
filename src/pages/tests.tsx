@@ -1335,6 +1335,9 @@ export default function TestsPage() {
   // Construir módulos combinando MODULES con el progreso de la API
   const modules: ModuleProgress[] = useMemo(() => {
     console.log("🔄 Recalculando módulos desde useMemo");
+    console.log("📦 Stats:", stats);
+    console.log("📦 MODULES:", MODULES.map(m => ({ key: m.key, title: m.title })));
+
     if (!stats) {
       return MODULES.map((m) => ({
         id: m.key,
@@ -1350,7 +1353,9 @@ export default function TestsPage() {
     }
 
     return MODULES.map((m) => {
+      console.log(`🔍 Procesando módulo: key="${m.key}", title="${m.title}"`);
       const apiProgress = stats.modules.find((mp) => mp.id === m.key);
+      console.log(`   API Progress encontrado:`, apiProgress);
 
       // Debug: Log para ver qué viene del backend
       if (m.key === 'abecedario') {
