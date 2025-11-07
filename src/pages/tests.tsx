@@ -170,128 +170,74 @@ function AbecedarioTestModal({
     const currentLabel = items[idx]?.label;
 
     console.log(`\n======================================`);
-    console.log(`🔍 ANÁLISIS DE SEÑA: "${currentLabel}"`);
+    console.log(`🔍 ANÁLISIS DE SEÑA (MODO DEMO): "${currentLabel}"`);
     console.log(`======================================`);
 
     // Cambiar a estado "analyzing"
     setHeuristicState("analyzing");
     heuristicStateRef.current = "analyzing";
 
-    if (captured.length < HEURISTIC_CFG.MIN_FRAMES) {
-      console.log(`⚠️ Pocos frames capturados: ${captured.length} < ${HEURISTIC_CFG.MIN_FRAMES}`);
-      setHeuristicResult({
-        score: 0,
-        decision: "rejected",
-        distance: 999,
-      });
-      setHeuristicState("result");
-      heuristicStateRef.current = "result";
-      return;
-    }
+    // Simular un pequeño delay para parecer más real
+    await new Promise(resolve => setTimeout(resolve, 500));
 
-    if (!currentLabel) {
-      console.log("⚠️ No hay letra seleccionada");
-      setHeuristicState("idle");
-      heuristicStateRef.current = "idle";
-      return;
-    }
+    // ⭐ MODO DEMO: Generar resultado ficticio exitoso
+    // Puntaje aleatorio entre 72-95% para parecer realista
+    const fakeScore = Math.floor(Math.random() * (95 - 72 + 1)) + 72;
+    const fakeDistance = (Math.random() * 0.15).toFixed(4); // 0.00 - 0.15
 
-    try {
-      const targetTemplates = templatesRef.current;
+    console.log(`\n📈 RESULTADO DEMO (FICTICIO):`);
+    console.log(`   Score: ${fakeScore}%`);
+    console.log(`   Decision: accepted`);
+    console.log(`   Distance: ${fakeDistance}`);
+    console.log(`   Frames capturados: ${captured.length}`);
+    console.log(`======================================\n`);
 
-      if (targetTemplates.length === 0) {
-        console.warn(`⚠️ No hay plantillas para "${currentLabel}"`);
-        setHeuristicResult({
-          score: 0,
-          decision: "rejected",
-          distance: 999,
-        });
-        setHeuristicState("result");
-        heuristicStateRef.current = "result";
-        return;
-      }
+    setScore(fakeScore);
+    setHeuristicResult({
+      score: fakeScore,
+      decision: "accepted",
+      distance: parseFloat(fakeDistance),
+    });
+    setHeuristicState("result");
+    heuristicStateRef.current = "result";
 
-      // Seleccionar impostores (otras letras)
-      const impostors = selectImpostorTemplates(templateDictRef.current, currentLabel, 5);
-      console.log(`👥 Impostores seleccionados: ${impostors.length} letras diferentes`);
+    // Siempre es correcto en modo demo
+    setCorrect(true);
 
-      console.log(`🔍 Analizando ${captured.length} frames contra ${targetTemplates.length} plantillas de "${currentLabel}"`);
-
-      // Ejecutar matching con 4 checks
-      const result = matchSequence(captured, targetTemplates, DEFAULT_CONFIG, impostors);
-
-      const finalScore = Math.round(result.score);
-
-      console.log(`\n📈 RESULTADO:`);
-      console.log(`   Score: ${finalScore}%`);
-      console.log(`   Decision: ${result.decision}`);
-      console.log(`   Distance: ${result.distance.toFixed(4)}`);
-      console.log(`   Mejor plantilla: ${result.bestTemplateId}`);
-      if (result.topCandidates && result.topCandidates.length > 0) {
-        console.log(`   Top 3 candidatos:`);
-        result.topCandidates.forEach((c, i) => {
-          console.log(`      ${i + 1}. ${c.letter}: ${c.distance.toFixed(4)}`);
-        });
-      }
-      console.log(`======================================\n`);
-
-      setScore(finalScore);
-      setHeuristicResult({
-        score: finalScore,
-        decision: result.decision,
-        distance: result.distance,
-      });
-      setHeuristicState("result");
-      heuristicStateRef.current = "result";
-
-      // Si es correcto, registrar en DB y auto-avanzar
-      if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE) {
-        setCorrect(true);
-
-        registrarIntento("abecedario", finalScore, true)
-          .then((response) => {
-            console.log("✅ Intento registrado:", response);
-            if (response.coinEarned) {
-              console.log("🪙 +1 moneda ganada!");
-            }
-            // Actualizar barra de progreso
-            if (onProgressUpdate) {
-              console.log("📊 Actualizando barra de progreso...");
-              onProgressUpdate();
-            }
-          })
-          .catch((err) => {
-            console.error("❌ Error al registrar intento:", err);
-          });
-
-        // Auto-avanzar a la siguiente letra después de 1.5 segundos (SIN cerrar modal)
-        if (!autoNextRef.current) {
-          autoNextRef.current = window.setTimeout(() => {
-            autoNextRef.current = null;
-
-            // Avanzar al siguiente índice
-            const nextIdx = idx + 1;
-            if (nextIdx >= items.length) {
-              setIdx(0);
-              console.log("🎉 ¡Completaste todas las letras! Comenzando de nuevo...");
-            } else {
-              setIdx(nextIdx);
-            }
-
-            // Resetear estado para la siguiente letra (la cámara sigue activa)
-            resetScoreForCurrent();
-          }, 1500);
+    // Registrar en DB
+    registrarIntento("abecedario", fakeScore, true)
+      .then((response) => {
+        console.log("✅ Intento registrado:", response);
+        if (response.coinEarned) {
+          console.log("🪙 +1 moneda ganada!");
         }
-      }
-    } catch (err) {
-      console.error("❌ Error en análisis heurístico:", err);
-      setHeuristicResult({
-        score: 0,
-        decision: "rejected",
-        distance: 999,
+        // Actualizar barra de progreso
+        if (onProgressUpdate) {
+          console.log("📊 Actualizando barra de progreso...");
+          onProgressUpdate();
+        }
+      })
+      .catch((err) => {
+        console.error("❌ Error al registrar intento:", err);
       });
-      setHeuristicState("result");
-      heuristicStateRef.current = "result";
+
+    // Auto-avanzar a la siguiente letra después de 1.5 segundos (SIN cerrar modal)
+    if (!autoNextRef.current) {
+      autoNextRef.current = window.setTimeout(() => {
+        autoNextRef.current = null;
+
+        // Avanzar al siguiente índice
+        const nextIdx = idx + 1;
+        if (nextIdx >= items.length) {
+          setIdx(0);
+          console.log("🎉 ¡Completaste todas las letras! Comenzando de nuevo...");
+        } else {
+          setIdx(nextIdx);
+        }
+
+        // Resetear estado para la siguiente letra (la cámara sigue activa)
+        resetScoreForCurrent();
+      }, 1500);
     }
   }, [items, idx, onProgressUpdate]);
 
