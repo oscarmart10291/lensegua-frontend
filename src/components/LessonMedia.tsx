@@ -1,10 +1,10 @@
 // src/components/LessonMedia.tsx
 import React, { useEffect, useState } from "react";
-import { getAbecedarioUrls, AbcMediaItem } from "../lib/storage";
+import { getAbecedarioUrls, getNumerosUrls, AbcMediaItem } from "../lib/storage";
 
 type Props = {
   moduleKey: string;
-  lessonKey: "A_I" | "J_R" | "S_Z" | (string & {}); // por si viene en minúsculas
+  lessonKey: "A_I" | "J_R" | "S_Z" | "1_5" | "6_10" | (string & {}); // agregar segmentos de números
   title?: string;
   /** Callback para abrir el modal de práctica desde Leccion.tsx */
   onPractice?: (label: string) => void;
@@ -31,9 +31,16 @@ export default function LessonMedia({
     async function run() {
       try {
         setLoading(true);
-        if (moduleKey.toUpperCase() === "ABECEDARIO") {
-          const seg = lessonKey.toUpperCase() as "A_I" | "J_R" | "S_Z";
+        const mk = moduleKey.toUpperCase();
+        const lk = lessonKey.toUpperCase();
+
+        if (mk === "ABECEDARIO") {
+          const seg = lk as "A_I" | "J_R" | "S_Z";
           const data = await getAbecedarioUrls(seg);
+          if (alive) setItems(data);
+        } else if (mk === "NUMEROS") {
+          const seg = lk as "1_5" | "6_10";
+          const data = await getNumerosUrls(seg);
           if (alive) setItems(data);
         } else {
           if (alive) setItems([]);
@@ -143,22 +150,44 @@ export default function LessonMedia({
               <div style={{ padding: 12, display: "grid", gap: 8 }}>
                 {it.note && <p style={{ margin: 0, color: "#475569" }}>{it.note}</p>}
 
-                <button
-                  type="button"
-                  style={{
-                    border: "1px solid #e5e7eb",
-                    background: "#fff",
-                    color: "#0f172a",
-                    padding: "8px 10px",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                    fontSize: 13,
-                    justifySelf: "start",
-                  }}
-                  onClick={() => onPractice?.(it.label)} // ← dispara el modal
-                >
-                  Practicar
-                </button>
+                {moduleKey.toUpperCase() === "NUMEROS" ? (
+                  <button
+                    type="button"
+                    disabled
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      background: "#f1f5f9",
+                      color: "#94a3b8",
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      cursor: "not-allowed",
+                      fontSize: 13,
+                      justifySelf: "start",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    🔒 Bloqueado
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      background: "#fff",
+                      color: "#0f172a",
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      cursor: "pointer",
+                      fontSize: 13,
+                      justifySelf: "start",
+                    }}
+                    onClick={() => onPractice?.(it.label)} // ← dispara el modal
+                  >
+                    Practicar
+                  </button>
+                )}
               </div>
             </article>
           ))}

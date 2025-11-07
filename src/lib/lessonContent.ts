@@ -20,6 +20,13 @@ const letters = (from: string, to: string) => {
   return arr;
 };
 
+// Utilidad para crear tarjetas de números
+const numbers = (from: number, to: number) => {
+  const arr: { label: string }[] = [];
+  for (let n = from; n <= to; n++) arr.push({ label: n.toString() });
+  return arr;
+};
+
 // ----- Contenido ABECEDARIO -----
 function abecedarioContent(lessonKey: string): LessonContent | null {
   if (lessonKey === 'A_I') {
@@ -64,10 +71,38 @@ function abecedarioContent(lessonKey: string): LessonContent | null {
   return null;
 }
 
+// ----- Contenido NÚMEROS -----
+function numerosContent(lessonKey: string): LessonContent | null {
+  if (lessonKey === '1_5') {
+    return {
+      moduleTitle: 'Números',
+      lessonTitle: 'Segmento 1 (1–5)',
+      blocks: [
+        { type: 'text', title: 'Objetivo', body: 'Aprender las señas de los números del 1 al 5 en LENSEGUA.' },
+        { type: 'imageGrid', title: 'Números 1–5', items: numbers(1, 5) },
+        { type: 'callout', kind: 'tip', body: 'Consejo: los números se forman con configuraciones específicas de los dedos. Practica la posición de cada dedo.' },
+      ],
+      next: { lessonKey: '6_10', title: 'Segmento 2 (6–10)' }
+    };
+  }
+  if (lessonKey === '6_10') {
+    return {
+      moduleTitle: 'Números',
+      lessonTitle: 'Segmento 2 (6–10)',
+      blocks: [
+        { type: 'text', title: 'Objetivo', body: 'Aprender las señas de los números del 6 al 10 en LENSEGUA.' },
+        { type: 'imageGrid', title: 'Números 6–10', items: numbers(6, 10) },
+        { type: 'callout', kind: 'info', body: 'Recuerda: la orientación de la mano es importante para números mayores a 5.' },
+      ],
+      prev: { lessonKey: '1_5', title: 'Segmento 1 (1–5)' }
+    };
+  }
+  return null;
+}
+
 export function getLessonContent(moduleKey: string, lessonKey: string): LessonContent | null {
   const mk = moduleKey.toUpperCase();
   if (mk === 'ABECEDARIO') return abecedarioContent(lessonKey);
-  // Aquí podrás ir agregando más módulos:
-  // if (mk === 'NUMEROS') { ... }
+  if (mk === 'NUMEROS') return numerosContent(lessonKey);
   return null;
 }
