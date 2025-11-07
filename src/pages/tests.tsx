@@ -1207,11 +1207,14 @@ export default function TestsPage() {
   const [showAbcModal, setShowAbcModal] = useState(false);
 
   // Cargar estadísticas del usuario
-  const loadStats = useCallback(async () => {
+  const loadStats = useCallback(async (silent = false) => {
     if (!user) return;
 
     try {
-      setLoading(true);
+      // Solo mostrar loading en la carga inicial, no en actualizaciones de background
+      if (!silent) {
+        setLoading(true);
+      }
       const data = await getUserStats();
       setStats(data);
     } catch (error) {
@@ -1223,7 +1226,9 @@ export default function TestsPage() {
         modules: [],
       });
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [user]);
 
@@ -1407,7 +1412,7 @@ export default function TestsPage() {
       <AbecedarioTestModal
         open={showAbcModal}
         onClose={() => setShowAbcModal(false)}
-        onProgressUpdate={loadStats}
+        onProgressUpdate={() => loadStats(true)} // silent = true para evitar re-renders
       />
     </>
   );
