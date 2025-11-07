@@ -233,14 +233,18 @@ export async function loadTemplates(
  */
 async function loadManifest(basePath: string): Promise<Record<string, string[]>> {
   try {
-    const response = await fetch(`${basePath}/manifest.json`);
+    const url = `${basePath}/manifest.json`;
+    console.log(`📂 Intentando cargar manifest desde: ${url}`);
+    const response = await fetch(url);
     if (!response.ok) {
-      console.warn(`No se encontró manifest.json en ${basePath}, se usará modo fallback`);
+      console.warn(`❌ No se encontró manifest.json en ${basePath} (status: ${response.status}), se usará modo fallback`);
       return {};
     }
-    return await response.json();
+    const data = await response.json();
+    console.log(`✅ Manifest cargado exitosamente. Letras disponibles: ${Object.keys(data).length}`);
+    return data;
   } catch (error) {
-    console.warn("Error cargando manifest.json:", error);
+    console.warn("❌ Error cargando manifest.json:", error);
     return {};
   }
 }
@@ -259,6 +263,7 @@ export async function loadTemplatesForLetter(
   maxCount?: number
 ): Promise<Template[]> {
   const templates: Template[] = [];
+  console.log(`\n🔧 loadTemplatesForLetter: letra="${letter}", maxCount=${maxCount}, basePath="${basePath}"`);
 
   // Intentar cargar desde manifest
   const manifest = await loadManifest(basePath);
@@ -266,13 +271,18 @@ export async function loadTemplatesForLetter(
 
   if (files && files.length > 0) {
     // Usar manifest
+    console.log(`✅ Manifest tiene ${files.length} archivos para "${letter}"`);
     const filesToLoad = maxCount ? files.slice(0, maxCount) : files;
+    console.log(`📥 Cargando ${filesToLoad.length} archivos...`);
 
     for (const filename of filesToLoad) {
       const url = `${basePath}/${letter}/${filename}`;
       try {
         const response = await fetch(url);
-        if (!response.ok) continue;
+        if (!response.ok) {
+          console.warn(`⚠️ Error HTTP ${response.status} al cargar ${url}`);
+          continue;
+        }
 
         const rawData = await response.json();
         const templateId = filename.replace('.json', '');
@@ -280,13 +290,17 @@ export async function loadTemplatesForLetter(
 
         if (template) {
           templates.push(template);
+          console.log(`  ✓ ${filename} OK`);
+        } else {
+          console.warn(`  ✗ ${filename} parseado como null (corrupto)`);
         }
       } catch (error) {
-        console.warn(`Error cargando ${url}:`, error);
+        console.warn(`❌ Error cargando ${url}:`, error);
       }
     }
   } else {
     // Fallback: intentar cargar archivos numerados
+    console.warn(`⚠️ Manifest no tiene archivos para "${letter}", usando fallback`);
     const count = maxCount || 3;
     for (let i = 1; i <= count; i++) {
       const url = `${basePath}/${letter}/${i}.json`;
@@ -306,6 +320,7 @@ export async function loadTemplatesForLetter(
     }
   }
 
+  console.log(`📊 Total plantillas cargadas para "${letter}": ${templates.length}`);
   return templates;
 }
 
