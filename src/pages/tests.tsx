@@ -481,7 +481,13 @@ function AbecedarioTestModal({
   const startCamera = useCallback(async () => {
     console.log(`🔍 [startCamera llamada] cameraInitializing=${cameraInitializingRef.current}, cameraReady=${cameraReadyRef.current}`);
 
-    // Verificación secundaria (el useEffect ya pone el flag)
+    // CRÍTICO: Verificar si ya hay un stream activo (protección contra React StrictMode)
+    if (streamRef.current && streamRef.current.active) {
+      console.log("⚠️ Ya existe un stream de cámara activo, ignorando llamada duplicada");
+      return;
+    }
+
+    // Verificación secundaria
     if (cameraReadyRef.current) {
       console.log("⚠️ Cámara ya está lista, ignorando llamada");
       return;
