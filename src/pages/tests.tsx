@@ -431,12 +431,15 @@ function AbecedarioTestModal({
         const ctx = canvasEl.getContext("2d");
         if (!ctx) return;
 
-        canvasEl.width = videoEl.videoWidth || 1280;
-        canvasEl.height = videoEl.videoHeight || 720;
+        const w = (canvasEl.width = videoEl.videoWidth || 1280);
+        const h = (canvasEl.height = videoEl.videoHeight || 720);
 
-        ctx.save();
-        ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-        ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+        ctx.clearRect(0, 0, w, h);
+
+        // Usar results.image que ya viene procesado por MediaPipe en modo espejo
+        if (results.image) {
+          ctx.drawImage(results.image as any, 0, 0, w, h);
+        }
 
         const hand = results.multiHandLandmarks?.[0];
         if (hand) {
@@ -444,18 +447,20 @@ function AbecedarioTestModal({
             lineWidth: 2,
             color: "#ffffff",
           });
+          ctx.save();
           ctx.fillStyle = "#22c55e";
           ctx.strokeStyle = "#065f46";
           ctx.lineWidth = 1.5;
-          const R = Math.max(2.5, Math.min(canvasEl.width, canvasEl.height) * 0.006);
+          const R = Math.max(2.5, Math.min(w, h) * 0.006);
           for (const p of hand) {
-            const x = p.x * canvasEl.width;
-            const y = p.y * canvasEl.height;
+            const x = p.x * w;
+            const y = p.y * h;
             ctx.beginPath();
             ctx.arc(x, y, R, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
           }
+          ctx.restore();
 
           // Capturar frames solo durante el estado "capturing"
           if (heuristicStateRef.current === "capturing") {
@@ -463,7 +468,6 @@ function AbecedarioTestModal({
             capturedFramesRef.current.push(frame);
           }
         }
-        ctx.restore();
       });
 
       handsRef.current = hands;
