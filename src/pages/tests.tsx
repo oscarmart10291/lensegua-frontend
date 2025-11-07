@@ -339,6 +339,7 @@ function AbecedarioTestModal({
       try {
         console.log(`🔧 Cargando plantillas para "${currentLabel}"...`);
 
+        // Cargar solo las plantillas de la letra actual
         const templates = await loadTemplatesForLetter(
           HEURISTIC_CFG.TEMPLATES_PATH,
           currentLabel,
@@ -348,28 +349,41 @@ function AbecedarioTestModal({
         if (!active) return;
 
         templatesRef.current = templates;
+        templateDictRef.current[currentLabel] = templates;
         console.log(`✅ ${templates.length} plantillas cargadas para "${currentLabel}"`);
 
-        // Pre-cargar todas las letras en el diccionario si aún no está
-        if (Object.keys(templateDictRef.current).length === 0) {
-          console.log("📚 Pre-cargando todas las plantillas...");
-          const allLetters = items.map(it => it.label).filter(Boolean);
+        // Iniciar countdown INMEDIATAMENTE después de cargar la letra actual
+        if (!active) return;
+        console.log(`🚀 Iniciando countdown para letra "${currentLabel}"`);
+        startHeuristicCountdown();
 
-          for (const letter of allLetters) {
-            const letterTemplates = await loadTemplatesForLetter(
-              HEURISTIC_CFG.TEMPLATES_PATH,
-              letter,
-              HEURISTIC_CFG.MAX_TEMPLATES_PER_LETTER
-            );
-            templateDictRef.current[letter] = letterTemplates;
+        // Pre-cargar otras letras en segundo plano (lazy loading)
+        if (active) {
+          const allLetters = items.map(it => it.label).filter(Boolean);
+          const otherLetters = allLetters.filter(l => l !== currentLabel);
+
+          // Cargar las primeras 5 letras diferentes para impostores
+          const toPreload = otherLetters.slice(0, 5);
+          console.log(`📚 Pre-cargando ${toPreload.length} letras adicionales en segundo plano...`);
+
+          for (const letter of toPreload) {
+            if (!active) break;
+            if (!templateDictRef.current[letter]) {
+              const letterTemplates = await loadTemplatesForLetter(
+                HEURISTIC_CFG.TEMPLATES_PATH,
+                letter,
+                HEURISTIC_CFG.MAX_TEMPLATES_PER_LETTER
+              );
+              if (active) {
+                templateDictRef.current[letter] = letterTemplates;
+              }
+            }
           }
 
-          console.log(`✅ Pre-cargadas ${Object.keys(templateDictRef.current).length} letras`);
+          if (active) {
+            console.log(`✅ Pre-carga completada. Letras disponibles: ${Object.keys(templateDictRef.current).length}`);
+          }
         }
-
-        // Iniciar countdown automáticamente cuando las plantillas estén listas
-        if (!active) return;
-        startHeuristicCountdown();
       } catch (err) {
         console.error(`❌ Error cargando plantillas para "${currentLabel}":`, err);
       }
