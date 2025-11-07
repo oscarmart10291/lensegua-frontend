@@ -1481,7 +1481,11 @@ export default function TestsPage() {
       {/* Modal del Abecedario */}
       <AbecedarioTestModal
         open={showAbcModal}
-        onClose={() => setShowAbcModal(false)}
+        onClose={() => {
+          setShowAbcModal(false);
+          // Actualizar estadísticas cuando se cierra el modal
+          loadStats(true);
+        }}
         onProgressUpdate={() => loadStats(true)} // silent = true para evitar re-renders
         initialIndex={abcStartIndex} // Iniciar desde la letra guardada
       />
