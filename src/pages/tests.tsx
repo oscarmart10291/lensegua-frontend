@@ -1354,11 +1354,11 @@ export default function TestsPage() {
 
     return MODULES.map((m) => {
       console.log(`🔍 Procesando módulo: key="${m.key}", title="${m.title}"`);
-      const apiProgress = stats.modules.find((mp) => mp.id === m.key);
+      const apiProgress = stats.modules.find((mp) => mp.id.toLowerCase() === m.key.toLowerCase());
       console.log(`   API Progress encontrado:`, apiProgress);
 
       // Debug: Log para ver qué viene del backend
-      if (m.key === 'abecedario') {
+      if (m.key.toLowerCase() === 'abecedario') {
         console.log('📊 Progreso del abecedario desde API:', {
           progress: apiProgress?.progress,
           currentLetterIndex: apiProgress?.currentLetterIndex,
