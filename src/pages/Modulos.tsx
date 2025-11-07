@@ -26,9 +26,8 @@ const LESSONS_BY_MODULE: Record<string, Lesson[]> = {
     { key: "S_Z", title: "Segmento 3 (S–Z)" },
   ],
   NUMEROS: [
-    { key: "0_5", title: "Números 0–5" },
+    { key: "1_5", title: "Números 1–5" },
     { key: "6_10", title: "Números 6–10" },
-    { key: "11_20", title: "Números 11–20" },
   ],
   FRASES_SALUDOS: [
     { key: "HOLA", title: "Hola" },
