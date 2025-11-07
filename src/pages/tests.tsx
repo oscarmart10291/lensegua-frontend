@@ -479,21 +479,15 @@ function AbecedarioTestModal({
 
   // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
-    console.log(`🔍 [startCamera llamada] cameraInitializing=${cameraInitializingRef.current}, cameraReady=${cameraReadyRef.current}`);
-
-    // CRÍTICO: Verificar si ya hay un stream activo (protección contra React StrictMode)
-    if (streamRef.current && streamRef.current.active) {
-      console.log("⚠️ Ya existe un stream de cámara activo, ignorando llamada duplicada");
+    // LOCK SÍNCRONO - PRIMERA LÍNEA: verificar y establecer flag atómicamente
+    if (cameraInitializingRef.current || cameraReadyRef.current) {
+      console.log(`⚠️ [startCamera] BLOQUEADO: init=${cameraInitializingRef.current}, ready=${cameraReadyRef.current}`);
       return;
     }
 
-    // Verificación secundaria
-    if (cameraReadyRef.current) {
-      console.log("⚠️ Cámara ya está lista, ignorando llamada");
-      return;
-    }
-
-    console.log("🎥 [startCamera] Iniciando proceso de inicialización...");
+    // Establecer flag INMEDIATAMENTE (antes de cualquier await)
+    cameraInitializingRef.current = true;
+    console.log("🔒 [startCamera] Lock adquirido, iniciando...");
 
     try {
       console.log("📷 Solicitando acceso a cámara...");
@@ -631,26 +625,12 @@ function AbecedarioTestModal({
     console.log("✅ Recursos limpiados");
   }, []);
 
-  // Iniciar cámara PRIMERO, antes de cargar plantillas
+  // Iniciar cámara cuando se abre el modal
   useEffect(() => {
-    if (!open) {
-      return;
-    }
+    if (!open) return;
 
-    console.log("🔵 [useEffect open] Modal abierto");
-    console.log(`🔍 Flags actuales: cameraInitializing=${cameraInitializingRef.current}, cameraReady=${cameraReadyRef.current}`);
-
-    // Doble protección: verificar flags Y PONERLO INMEDIATAMENTE antes de llamar
-    if (!cameraInitializingRef.current && !cameraReadyRef.current) {
-      console.log("✅ Flags libres");
-      // CRÍTICO: Poner flag AQUÍ, ANTES de llamar startCamera (que es async)
-      cameraInitializingRef.current = true;
-      console.log("🔒 Flag cameraInitializing puesto a TRUE en useEffect");
-      console.log("📞 Llamando startCamera()...");
-      startCamera();
-    } else {
-      console.log("⚠️ [useEffect] Cámara ya está en proceso o lista, NO llamando startCamera()");
-    }
+    console.log("🔵 [useEffect open] Modal abierto, llamando startCamera()...");
+    startCamera(); // startCamera tiene su propio lock interno
 
     // Cleanup solo cuando se cierra el modal
     return () => {
