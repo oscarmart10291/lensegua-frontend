@@ -247,7 +247,7 @@ function AbecedarioTestModal({
       setHeuristicState("result");
       heuristicStateRef.current = "result";
 
-      // Si es correcto, registrar en DB (sin auto-avance)
+      // Si es correcto, registrar en DB y auto-avanzar
       if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE) {
         setCorrect(true);
 
@@ -266,6 +266,25 @@ function AbecedarioTestModal({
           .catch((err) => {
             console.error("❌ Error al registrar intento:", err);
           });
+
+        // Auto-cerrar modal y avanzar a la siguiente letra después de 1.5 segundos
+        if (!autoNextRef.current) {
+          autoNextRef.current = window.setTimeout(() => {
+            autoNextRef.current = null;
+
+            // Avanzar al siguiente índice
+            const nextIdx = idx + 1;
+            if (nextIdx >= items.length) {
+              setIdx(0);
+              alert("¡Has completado todas las letras! 🎉 Comenzando de nuevo...");
+            } else {
+              setIdx(nextIdx);
+            }
+
+            // Cerrar el modal
+            onClose();
+          }, 1500);
+        }
       }
     } catch (err) {
       console.error("❌ Error en análisis heurístico:", err);
