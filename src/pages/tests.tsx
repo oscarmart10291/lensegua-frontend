@@ -1304,7 +1304,15 @@ export default function TestsPage() {
         setLoading(true);
       }
       const data = await getUserStats();
-      setStats(data);
+      console.log("📥 Stats recibidos del API:", data);
+
+      // Crear nuevo objeto para forzar re-render
+      setStats({
+        ...data,
+        modules: [...data.modules], // Nueva referencia de array
+      });
+
+      console.log("✅ Estado actualizado con nuevos stats");
     } catch (error) {
       console.error("Error al cargar estadísticas:", error);
       setStats({
