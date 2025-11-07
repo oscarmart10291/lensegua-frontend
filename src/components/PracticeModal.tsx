@@ -3,6 +3,16 @@ import Webcam from "react-webcam";
 import { Hands, HAND_CONNECTIONS, Results } from "@mediapipe/hands";
 import { drawConnectors } from "@mediapipe/drawing_utils";
 import * as tf from "@tensorflow/tfjs";
+import {
+  matchSequence,
+  parseLandmarks,
+  loadTemplatesForLetter,
+  selectImpostorTemplates,
+  DEFAULT_CONFIG,
+  type Template,
+  type Sequence,
+  type TemplateDict,
+} from "../lib/heuristics";
 
 /* =================== Tipos y props =================== */
 type Props = {
@@ -10,9 +20,18 @@ type Props = {
   open: boolean;
   onClose: () => void;
   modelUrl?: string;          // default: /models/estatico_last/model.json
+  mode?: "tensorflow" | "heuristic";  // default: tensorflow
 };
 
 type MPPoint = { x: number; y: number; z?: number };
+
+type HeuristicState = "idle" | "countdown" | "capturing" | "analyzing" | "result";
+
+type HeuristicResult = {
+  score: number;
+  decision: "accepted" | "rejected" | "ambiguous";
+  distance: number;
+};
 
 /* =================== Configuración =================== */
 const CFG = {
@@ -34,6 +53,7 @@ export default function PracticeModal({
   open,
   onClose,
   modelUrl = "/models/estatico_last/model.json",
+  mode = "heuristic", // Por defecto heurístico
 }: Props) {
   const webcamRef = useRef<Webcam | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -46,7 +66,7 @@ export default function PracticeModal({
   const [camReady, setCamReady] = useState(false);
   const [camError, setCamError] = useState<string | null>(null);
 
-  // modelo e input
+  // modelo e input (TensorFlow)
   const modelRef = useRef<tf.LayersModel | null>(null);
   const [inputKind, setInputKind] = useState<"vector" | "sequence" | "image" | null>(null);
   const [vecLen, setVecLen] = useState<number | null>(null);
@@ -55,15 +75,28 @@ export default function PracticeModal({
   const [numClasses, setNumClasses] = useState<number>(0);
   const [lastActivation, setLastActivation] = useState<string>("(?)");
 
-  // salida / debug
+  // salida / debug (TensorFlow)
   const [score, setScore] = useState(0);
   const [topIdx, setTopIdx] = useState<number | null>(null);
   const [topProb, setTopProb] = useState<number>(0);
   const seqBufferRef = useRef<number[][]>([]);
 
-  // mapeo
+  // mapeo (TensorFlow)
   const [classIndex, setClassIndex] = useState<Record<string, number> | null>(null);
   const [calMode, setCalMode] = useState(false); // modo calibración (UI)
+
+  // === MODO HEURÍSTICO ===
+  const [heuristicState, setHeuristicState] = useState<HeuristicState>("idle");
+  const [countdown, setCountdown] = useState(3);
+  const [heuristicResult, setHeuristicResult] = useState<HeuristicResult | null>(null);
+  const capturedFramesRef = useRef<Sequence>([]);
+  const templatesRef = useRef<Template[]>([]);
+  const templateDictRef = useRef<TemplateDict>({});
+  const countdownTimerRef = useRef<number | null>(null);
+
+  // Refs para acceder al estado actual desde el callback de MediaPipe
+  const heuristicStateRef = useRef<HeuristicState>("idle");
+  const modeRef = useRef<"tensorflow" | "heuristic">(mode);
 
   /* ---------- helpers mapeo ---------- */
   const loadLocalMapping = () => {
@@ -102,9 +135,171 @@ export default function PracticeModal({
     URL.revokeObjectURL(a.href);
   };
 
+  /* ---------- funciones modo heurístico ---------- */
+  const startHeuristicCountdown = () => {
+    setHeuristicState("countdown");
+    heuristicStateRef.current = "countdown";
+    setCountdown(3);
+    capturedFramesRef.current = [];
+
+    let count = 3;
+    countdownTimerRef.current = window.setInterval(() => {
+      count--;
+      setCountdown(count);
+      if (count === 0) {
+        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+        // Iniciar fase de captura
+        startCapture();
+      }
+    }, 1000);
+  };
+
+  const startCapture = () => {
+    setHeuristicState("capturing");
+    heuristicStateRef.current = "capturing";
+    setCountdown(3); // 3 segundos para realizar la seña
+
+    let count = 3;
+    countdownTimerRef.current = window.setInterval(() => {
+      count--;
+      setCountdown(count);
+      if (count === 0) {
+        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+        analyzeHeuristicCapture();
+      }
+    }, 1000);
+  };
+
+  const analyzeHeuristicCapture = async () => {
+    setHeuristicState("analyzing");
+    heuristicStateRef.current = "analyzing"; // Actualizar ref también
+
+    // Esperar un poco para mostrar el estado "Analizando..."
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const captured = capturedFramesRef.current;
+    console.log(`\n🔍 ===== ANÁLISIS HEURÍSTICO: ${label} =====`);
+    console.log(`📊 Frames capturados: ${captured.length}`);
+
+    if (captured.length < DEFAULT_CONFIG.minFramesRequired) {
+      console.log(`❌ Muy pocos frames (mínimo: ${DEFAULT_CONFIG.minFramesRequired})`);
+      setHeuristicResult({
+        score: 0,
+        decision: "rejected",
+        distance: Infinity,
+      });
+      setHeuristicState("result");
+      return;
+    }
+
+    // Obtener plantillas de la letra objetivo
+    const targetTemplates = templatesRef.current;
+    console.log(`📁 Plantillas de "${label}": ${targetTemplates.length}`);
+
+    if (targetTemplates.length === 0) {
+      console.log(`❌ No hay plantillas para la letra "${label}"`);
+      setHeuristicResult({
+        score: 0,
+        decision: "rejected",
+        distance: Infinity,
+      });
+      setHeuristicState("result");
+      return;
+    }
+
+    // Seleccionar impostores
+    const impostors = selectImpostorTemplates(templateDictRef.current, label, 5);
+    console.log(`👥 Impostores seleccionados: ${impostors.length} letras diferentes`);
+
+    // Ejecutar matching
+    const result = matchSequence(captured, targetTemplates, DEFAULT_CONFIG, impostors);
+
+    console.log(`\n📈 RESULTADO:`);
+    console.log(`   Score: ${result.score.toFixed(2)}%`);
+    console.log(`   Decision: ${result.decision}`);
+    console.log(`   Distance: ${result.distance.toFixed(4)}`);
+    if (result.topCandidates && result.topCandidates.length > 0) {
+      console.log(`   Top 3 candidatos:`);
+      result.topCandidates.forEach((c, i) => {
+        console.log(`      ${i + 1}. ${c.letter}: ${c.distance.toFixed(4)}`);
+      });
+    }
+    console.log(`======================================\n`);
+
+    setHeuristicResult({
+      score: Math.round(result.score),
+      decision: result.decision,
+      distance: result.distance,
+    });
+    setHeuristicState("result");
+    heuristicStateRef.current = "result"; // Actualizar ref también
+  };
+
+  const retryHeuristic = () => {
+    setHeuristicResult(null);
+    capturedFramesRef.current = [];
+    startHeuristicCountdown();
+  };
+
+  const closeHeuristic = () => {
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    setHeuristicState("idle");
+    heuristicStateRef.current = "idle"; // Actualizar ref también
+    setHeuristicResult(null);
+    capturedFramesRef.current = [];
+    onClose();
+  };
+
+  /* ---------- sincronizar refs con estado ---------- */
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  /* ---------- cargar plantillas heurísticas ---------- */
+  useEffect(() => {
+    if (!open || mode !== "heuristic") return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        // Cargar plantillas de la letra objetivo
+        const templates = await loadTemplatesForLetter("/landmarks", label, 3);
+        if (cancelled) return;
+
+        templatesRef.current = templates;
+
+        // Cargar también algunas plantillas de otras letras para impostor check
+        // (esto podría precargarse en un contexto global)
+        const allLetters = ["A", "B", "C", "E", "G", "H", "I", "K", "L", "M", "N", "O", "Q", "RR", "T", "U", "V", "W", "X", "Y", "Z"];
+        const otherLetters = allLetters.filter(l => l !== label).slice(0, 5);
+
+        for (const letter of otherLetters) {
+          const otherTemplates = await loadTemplatesForLetter("/landmarks", letter, 1);
+          if (cancelled) return;
+          if (otherTemplates.length > 0) {
+            templateDictRef.current[letter] = otherTemplates;
+          }
+        }
+
+        // Iniciar countdown automáticamente
+        if (!cancelled) {
+          startHeuristicCountdown();
+        }
+      } catch (error) {
+        console.error("Error cargando plantillas:", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    };
+  }, [open, mode, label]);
+
   /* ---------- cargar modelo ---------- */
   useEffect(() => {
-    if (!open) return;
+    if (!open || mode !== "tensorflow") return;
     let active = true;
     setScore(0); setTopIdx(null); setTopProb(0);
     seqBufferRef.current = [];
@@ -128,11 +323,11 @@ export default function PracticeModal({
     })();
 
     return () => { active = false; modelRef.current = null; };
-  }, [open, modelUrl]);
+  }, [open, mode, modelUrl]);
 
   /* ---------- cargar mapeo (archivo + localStorage) ---------- */
   useEffect(() => {
-    if (!open) return;
+    if (!open || mode !== "tensorflow") return;
     let cancelled = false;
 
     const fromLS = loadLocalMapping();
@@ -154,7 +349,7 @@ export default function PracticeModal({
     })();
 
     return () => { cancelled = true; };
-  }, [open, modelUrl]);
+  }, [open, mode, modelUrl]);
 
   /* ---------- mediapipe ---------- */
   useEffect(() => {
@@ -193,12 +388,21 @@ export default function PracticeModal({
         const R = Math.max(2.5, Math.min(w, h) * 0.006);
         for (const p of hand) { const x = p.x * w, y = p.y * h; ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI*2); ctx.fill(); ctx.stroke(); }
         ctx.restore();
+
+        // === CAPTURA PARA MODO HEURÍSTICO ===
+        if (modeRef.current === "heuristic" && heuristicStateRef.current === "capturing" && hand) {
+          const frame = parseLandmarks(hand.map(p => ({ x: p.x, y: p.y, z: p.z ?? 0 })));
+          capturedFramesRef.current.push(frame);
+        }
       }
 
-      const now = performance.now();
-      if (now - lastInferAtRef.current > 225) {
-        lastInferAtRef.current = now;
-        inferScore(results);
+      // === INFERENCIA PARA MODO TENSORFLOW ===
+      if (modeRef.current === "tensorflow") {
+        const now = performance.now();
+        if (now - lastInferAtRef.current > 225) {
+          lastInferAtRef.current = now;
+          inferScore(results);
+        }
       }
     });
 
@@ -357,55 +561,64 @@ export default function PracticeModal({
         {/* Header */}
         <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, borderBottom: "1px solid #e5e7eb" }}>
           <div style={{ fontWeight: 800, color: "#0f172a" }}>Práctica — {label}</div>
-          <div style={{ marginLeft: "auto", fontSize: 13, color: "#475569" }}>
-            Coincidencia: <strong>{Math.round(score * 100)}%</strong>
-          </div>
+          {mode === "heuristic" && heuristicResult && (
+            <div style={{ marginLeft: "auto", fontSize: 13, color: "#475569" }}>
+              Coincidencia: <strong>{heuristicResult.score}%</strong>
+            </div>
+          )}
+          {mode === "tensorflow" && (
+            <div style={{ marginLeft: "auto", fontSize: 13, color: "#475569" }}>
+              Coincidencia: <strong>{Math.round(score * 100)}%</strong>
+            </div>
+          )}
           <button
-            onClick={onClose}
-            style={{ marginLeft: 8, border: "1px solid #e5e7eb", background: "#fff", color: "#0f172a", padding: "8px 10px", borderRadius: 10, cursor: "pointer", fontSize: 13 }}
+            onClick={mode === "heuristic" ? closeHeuristic : onClose}
+            style={{ marginLeft: mode === "tensorflow" ? 8 : "auto", border: "1px solid #e5e7eb", background: "#fff", color: "#0f172a", padding: "8px 10px", borderRadius: 10, cursor: "pointer", fontSize: 13 }}
           >
             Cerrar
           </button>
         </div>
 
-        {/* Debug + Calibración */}
-        <div style={{ padding: "8px 12px", background: "#f8fafc", borderBottom: "1px solid #e5e7eb", fontSize: 12, color: "#0f172a" }}>
-          <b>Debug</b> · {dbgInput} · clases: {numClasses} · última: {lastActivation}
-          {hasMapping ? <> · índice “{label}”: {mappedIdx}</> : <> · índice “{label}”: —</>}
-          {topIdx != null && <> · top: #{topIdx} ({Math.round(topProb * 100)}%)</>}
-          {hasMapping && topIdx != null && mappedIdx !== topIdx && (
-            <span style={{ color: "#b45309" }}> · (top ≠ índice mapeado)</span>
-          )}
-          <div style={{ marginTop: 6, display: "flex", gap: 8 }}>
-            <button
-              onClick={() => setCalMode(v => !v)}
-              title="Activa modo calibración para capturar índices"
-              style={{ border: "1px solid #e5e7eb", background: calMode ? "#fef3c7" : "#fff", padding: "6px 10px", borderRadius: 8, cursor: "pointer" }}
-            >
-              Calibrar (C)
-            </button>
-            <button
-              onClick={assignTopToCurrentLabel}
-              disabled={!calMode || topIdx == null}
-              title="Asigna el índice 'top' actual a la letra"
-              style={{ border: "1px solid #e5e7eb", background: calMode ? "#eef2ff" : "#fff", padding: "6px 10px", borderRadius: 8, cursor: calMode && topIdx != null ? "pointer" : "not-allowed" }}
-            >
-              Asignar top → “{label}”
-            </button>
-            <button
-              onClick={downloadJSON}
-              title="Descarga class_index.json con el mapeo actual"
-              style={{ border: "1px solid #e5e7eb", background: "#fff", padding: "6px 10px", borderRadius: 8, cursor: "pointer" }}
-            >
-              Descargar JSON
-            </button>
-            {!hasMapping && (
-              <span style={{ alignSelf: "center", color: "#b45309" }}>
-                (Sin mapeo para “{label}”, usando confianza general)
-              </span>
+        {/* Debug + Calibración (solo en modo TensorFlow) */}
+        {mode === "tensorflow" && (
+          <div style={{ padding: "8px 12px", background: "#f8fafc", borderBottom: "1px solid #e5e7eb", fontSize: 12, color: "#0f172a" }}>
+            <b>Debug</b> · {dbgInput} · clases: {numClasses} · última: {lastActivation}
+            {hasMapping ? <> · índice "{label}": {mappedIdx}</> : <> · índice "{label}": —</>}
+            {topIdx != null && <> · top: #{topIdx} ({Math.round(topProb * 100)}%)</>}
+            {hasMapping && topIdx != null && mappedIdx !== topIdx && (
+              <span style={{ color: "#b45309" }}> · (top ≠ índice mapeado)</span>
             )}
+            <div style={{ marginTop: 6, display: "flex", gap: 8 }}>
+              <button
+                onClick={() => setCalMode(v => !v)}
+                title="Activa modo calibración para capturar índices"
+                style={{ border: "1px solid #e5e7eb", background: calMode ? "#fef3c7" : "#fff", padding: "6px 10px", borderRadius: 8, cursor: "pointer" }}
+              >
+                Calibrar (C)
+              </button>
+              <button
+                onClick={assignTopToCurrentLabel}
+                disabled={!calMode || topIdx == null}
+                title="Asigna el índice 'top' actual a la letra"
+                style={{ border: "1px solid #e5e7eb", background: calMode ? "#eef2ff" : "#fff", padding: "6px 10px", borderRadius: 8, cursor: calMode && topIdx != null ? "pointer" : "not-allowed" }}
+              >
+                Asignar top → "{label}"
+              </button>
+              <button
+                onClick={downloadJSON}
+                title="Descarga class_index.json con el mapeo actual"
+                style={{ border: "1px solid #e5e7eb", background: "#fff", padding: "6px 10px", borderRadius: 8, cursor: "pointer" }}
+              >
+                Descargar JSON
+              </button>
+              {!hasMapping && (
+                <span style={{ alignSelf: "center", color: "#b45309" }}>
+                  (Sin mapeo para "{label}", usando confianza general)
+                </span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Body */}
         <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 0, minHeight: 420 }}>
@@ -436,29 +649,135 @@ export default function PracticeModal({
 
           {/* Panel derecho */}
           <div style={{ padding: 16 }}>
-            <p style={{ marginTop: 4, color: "#334155" }}>
-              Coloca tu mano como la seña de <strong>{label}</strong>.
-              {hasMapping ? (
-                <> Este modo compara <em>solo</em> contra <b>{label}</b>.</>
-              ) : (
-                <> (Sin mapeo: se muestra confianza general del modelo.)</>
-              )}
-            </p>
+            {mode === "heuristic" ? (
+              <>
+                {/* === MODO HEURÍSTICO === */}
+                {heuristicState === "countdown" && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 380 }}>
+                    <div style={{ fontSize: 96, fontWeight: 800, color: "#0f172a", marginBottom: 24 }}>{countdown}</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, color: "#334155", marginBottom: 12 }}>
+                      Prepárate...
+                    </div>
+                    <div style={{ fontSize: 14, color: "#64748b", textAlign: "center", maxWidth: 300 }}>
+                      La captura iniciará cuando llegue a cero.
+                    </div>
+                  </div>
+                )}
 
-            <div style={{ marginTop: 12 }}>
-              <div style={{ height: 10, width: "100%", background: "#e2e8f0", borderRadius: 999, overflow: "hidden", border: "1px solid #e5e7eb" }}>
-                <div style={{ height: "100%", width: `${Math.round(score * 100)}%`, background: "#16a34a", transition: "width .15s linear" }} />
-              </div>
-              <div style={{ marginTop: 8, fontSize: 13, color: "#475569" }}>
-                Precisión actual: <strong>{Math.round(score * 100)}%</strong>
-              </div>
-            </div>
+                {heuristicState === "capturing" && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 380 }}>
+                    <div style={{ fontSize: 96, fontWeight: 800, color: "#16a34a", marginBottom: 24 }}>{countdown}</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: "#16a34a", marginBottom: 12 }}>
+                      ¡Ahora!
+                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: "#334155", marginBottom: 12 }}>
+                      Realiza la seña de <strong>{label}</strong>
+                    </div>
+                    <div style={{ marginTop: 24, padding: "8px 12px", background: "#dcfce7", borderRadius: 8, fontSize: 12, color: "#166534" }}>
+                      Capturando: {capturedFramesRef.current.length} frames
+                    </div>
+                  </div>
+                )}
 
-            <ul style={{ marginTop: 16, paddingLeft: 18, color: "#475569" }}>
-              <li>Usa buena iluminación y mantén la mano estable.</li>
-              <li>Evita recortar dedos fuera del encuadre.</li>
-              <li>Si el índice top no coincide con “{label}”, usa <b>Asignar top → “{label}”</b>.</li>
-            </ul>
+                {heuristicState === "analyzing" && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 380 }}>
+                    <div style={{ fontSize: 48, marginBottom: 24 }}>🔍</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, color: "#334155", marginBottom: 12 }}>
+                      Analizando...
+                    </div>
+                    <div style={{ fontSize: 14, color: "#64748b", textAlign: "center" }}>
+                      Comparando tu seña con las plantillas de referencia
+                    </div>
+                  </div>
+                )}
+
+                {heuristicState === "result" && heuristicResult && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 380 }}>
+                    {heuristicResult.decision === "accepted" ? (
+                      <>
+                        <div style={{ fontSize: 64, marginBottom: 16 }}>✅</div>
+                        <div style={{ fontSize: 24, fontWeight: 700, color: "#16a34a", marginBottom: 8 }}>
+                          ¡Aprobado!
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 64, marginBottom: 16 }}>❌</div>
+                        <div style={{ fontSize: 24, fontWeight: 700, color: "#dc2626", marginBottom: 8 }}>
+                          Intenta nuevamente
+                        </div>
+                      </>
+                    )}
+                    <div style={{ fontSize: 48, fontWeight: 800, color: "#0f172a", marginTop: 12 }}>
+                      {heuristicResult.score}%
+                    </div>
+                    <div style={{ fontSize: 14, color: "#64748b", marginBottom: 24 }}>
+                      de coincidencia
+                    </div>
+
+                    {heuristicResult.score < 70 && (
+                      <div style={{ marginTop: 16, padding: "12px 16px", background: "#fef3c7", borderRadius: 8, fontSize: 13, color: "#92400e", maxWidth: 320, textAlign: "center" }}>
+                        <strong>Consejo:</strong> Asegúrate de formar la seña correctamente y mantenerla estable durante el conteo.
+                      </div>
+                    )}
+
+                    <div style={{ display: "flex", gap: 12, marginTop: 32 }}>
+                      <button
+                        onClick={retryHeuristic}
+                        style={{ padding: "10px 20px", background: "#3b82f6", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: 14, fontWeight: 600 }}
+                      >
+                        Reintentar
+                      </button>
+                      <button
+                        onClick={closeHeuristic}
+                        style={{ padding: "10px 20px", background: "#e5e7eb", color: "#0f172a", border: "none", borderRadius: 10, cursor: "pointer", fontSize: 14, fontWeight: 600 }}
+                      >
+                        Cerrar
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {heuristicState === "idle" && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 380 }}>
+                    <div style={{ fontSize: 48, marginBottom: 24 }}>⏳</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, color: "#334155", marginBottom: 12 }}>
+                      Preparando...
+                    </div>
+                    <div style={{ fontSize: 14, color: "#64748b", textAlign: "center" }}>
+                      Cargando plantillas de referencia
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                {/* === MODO TENSORFLOW === */}
+                <p style={{ marginTop: 4, color: "#334155" }}>
+                  Coloca tu mano como la seña de <strong>{label}</strong>.
+                  {hasMapping ? (
+                    <> Este modo compara <em>solo</em> contra <b>{label}</b>.</>
+                  ) : (
+                    <> (Sin mapeo: se muestra confianza general del modelo.)</>
+                  )}
+                </p>
+
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ height: 10, width: "100%", background: "#e2e8f0", borderRadius: 999, overflow: "hidden", border: "1px solid #e5e7eb" }}>
+                    <div style={{ height: "100%", width: `${Math.round(score * 100)}%`, background: "#16a34a", transition: "width .15s linear" }} />
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 13, color: "#475569" }}>
+                    Precisión actual: <strong>{Math.round(score * 100)}%</strong>
+                  </div>
+                </div>
+
+                <ul style={{ marginTop: 16, paddingLeft: 18, color: "#475569" }}>
+                  <li>Usa buena iluminación y mantén la mano estable.</li>
+                  <li>Evita recortar dedos fuera del encuadre.</li>
+                  <li>Si el índice top no coincide con "{label}", usa <b>Asignar top → "{label}"</b>.</li>
+                </ul>
+              </>
+            )}
           </div>
         </div>
       </div>
