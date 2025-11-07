@@ -65,12 +65,14 @@ function medalLabel(tier: MedalTier) {
 }
 
 // =============== Configuración para detección heurística ===============
+// IMPORTANTE: Usar los mismos parámetros que lecciones (PracticeModal)
 const HEURISTIC_CFG = {
   MIN_SCORE: 60,          // 60% mínimo para marcar como correcta
   CAPTURE_DURATION: 3000, // 3 segundos capturando frames
   MIN_FRAMES: 20,         // Mínimo de frames para analizar
   TEMPLATES_PATH: "/landmarks",
-  MAX_TEMPLATES_PER_LETTER: 10,
+  MAX_TEMPLATES_PER_LETTER: 3,  // Igual que lecciones (era 10, muy estricto)
+  MAX_TEMPLATES_IMPOSTOR: 1,    // 1 plantilla por impostor (igual que lecciones)
 };
 
 const MAX_ITEMS = 26; // todas las letras A-Z
@@ -369,10 +371,11 @@ function AbecedarioTestModal({
           for (const letter of toPreload) {
             if (!active) break;
             if (!templateDictRef.current[letter]) {
+              // Usar MAX_TEMPLATES_IMPOSTOR para otras letras (igual que lecciones)
               const letterTemplates = await loadTemplatesForLetter(
                 HEURISTIC_CFG.TEMPLATES_PATH,
                 letter,
-                HEURISTIC_CFG.MAX_TEMPLATES_PER_LETTER
+                HEURISTIC_CFG.MAX_TEMPLATES_IMPOSTOR
               );
               if (active) {
                 templateDictRef.current[letter] = letterTemplates;
