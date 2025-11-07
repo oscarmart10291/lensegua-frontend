@@ -429,14 +429,17 @@ function AbecedarioTestModal({
 
   // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
-    // Evitar múltiples inicializaciones
+    console.log(`🔍 [startCamera llamada] cameraInitializing=${cameraInitializingRef.current}, cameraReady=${cameraReadyRef.current}`);
+
+    // Evitar múltiples inicializaciones - CHECK ANTES DE TODO
     if (cameraInitializingRef.current || cameraReadyRef.current) {
       console.log("⚠️ Cámara ya está inicializándose o ya está lista, ignorando llamada");
       return;
     }
 
+    // INMEDIATAMENTE poner flag, no esperar async
     cameraInitializingRef.current = true;
-    console.log("🎥 [startCamera] Iniciando proceso de inicialización...");
+    console.log("🎥 [startCamera] Flag puesto, iniciando proceso de inicialización...");
 
     try {
       console.log("📷 Solicitando acceso a cámara...");
@@ -579,10 +582,16 @@ function AbecedarioTestModal({
       return;
     }
 
-    console.log("🔵 [useEffect open] Modal abierto, iniciando cámara...");
-    // Solo iniciar cámara cuando se abre el modal
-    // startCamera tiene protección interna para evitar múltiples llamadas
-    startCamera();
+    console.log("🔵 [useEffect open] Modal abierto");
+    console.log(`🔍 Flags actuales: cameraInitializing=${cameraInitializingRef.current}, cameraReady=${cameraReadyRef.current}`);
+
+    // Doble protección: verificar flags antes de llamar startCamera
+    if (!cameraInitializingRef.current && !cameraReadyRef.current) {
+      console.log("✅ Flags libres, llamando startCamera()...");
+      startCamera();
+    } else {
+      console.log("⚠️ [useEffect] Cámara ya está en proceso o lista, NO llamando startCamera()");
+    }
 
     // Cleanup solo cuando se cierra el modal
     return () => {
