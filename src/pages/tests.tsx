@@ -164,6 +164,50 @@ function AbecedarioTestModal({
     resetScoreForCurrent();
   }, [open, resetScoreForCurrent]);
 
+  // Observar cambios en idx para iniciar countdown en la nueva letra (excepto primera carga)
+  useEffect(() => {
+    if (!open) return;
+    if (items.length === 0) return;
+    if (!cameraReadyRef.current) return; // Esperar a que la cámara esté lista
+    if (heuristicState !== "idle") return; // Solo cuando estamos en idle (después de resetear)
+
+    const currentLabel = items[idx]?.label;
+    if (!currentLabel) return;
+
+    // Este es el flag para saber si ya cargamos las plantillas iniciales
+    const isInitialLoad = !templatesRef.current || templatesRef.current.length === 0;
+    if (isInitialLoad) return; // No hacer nada en la carga inicial
+
+    console.log(`🔄 Cambio de letra detectado: "${currentLabel}"`);
+
+    // Cargar plantillas de la nueva letra y iniciar countdown
+    (async () => {
+      try {
+        // Verificar si ya tenemos las plantillas en caché
+        if (templateDictRef.current[currentLabel]) {
+          console.log(`✅ Plantillas ya en caché para "${currentLabel}"`);
+          templatesRef.current = templateDictRef.current[currentLabel];
+        } else {
+          console.log(`📥 Cargando plantillas para "${currentLabel}"...`);
+          const templates = await loadTemplatesForLetter(
+            HEURISTIC_CFG.TEMPLATES_PATH,
+            currentLabel,
+            HEURISTIC_CFG.MAX_TEMPLATES_PER_LETTER
+          );
+          templatesRef.current = templates;
+          templateDictRef.current[currentLabel] = templates;
+          console.log(`✅ ${templates.length} plantillas cargadas para "${currentLabel}"`);
+        }
+
+        // Iniciar countdown para la nueva letra
+        console.log(`🎬 Iniciando countdown para "${currentLabel}"`);
+        startHeuristicCountdown();
+      } catch (err) {
+        console.error(`❌ Error cargando plantillas para "${currentLabel}":`, err);
+      }
+    })();
+  }, [idx, items, open, heuristicState, startHeuristicCountdown]);
+
   // Analizar secuencia capturada con el sistema heurístico
   const analyzeCapture = useCallback(async () => {
     const captured = capturedFramesRef.current;
