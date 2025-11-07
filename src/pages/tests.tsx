@@ -53,6 +53,7 @@ export type ModuleProgress = {
   locked?: boolean;
   medal: MedalTier;
   coinsEarned: number;
+  currentLetterIndex?: number; // Para abecedario: índice de la letra actual
 };
 
 function medalLabel(tier: MedalTier) {
@@ -82,14 +83,24 @@ function AbecedarioTestModal({
   open,
   onClose,
   onProgressUpdate,
+  initialIndex = 0,
 }: {
   open: boolean;
   onClose: () => void;
   onProgressUpdate?: () => void;
+  initialIndex?: number;
 }) {
   const [items, setItems] = useState<AbcMediaItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [idx, setIdx] = useState(0);
+  const [idx, setIdx] = useState(initialIndex);
+
+  // Actualizar idx cuando initialIndex cambie (al abrir modal)
+  useEffect(() => {
+    if (open) {
+      setIdx(initialIndex);
+      console.log(`🎯 Iniciando desde letra ${initialIndex + 1}`);
+    }
+  }, [open, initialIndex]);
 
   // Estado de detección
   const [score, setScore] = useState(0); // 0..100
@@ -238,10 +249,11 @@ function AbecedarioTestModal({
 
       console.log("💾 Registrando intento en base de datos...");
 
-      // Registrar en DB
-      registrarIntento("abecedario", fakeScore, true)
+      // Registrar en DB con índice actual para guardar progreso
+      registrarIntento("abecedario", fakeScore, true, undefined, idx)
         .then((response) => {
           console.log("✅ Intento registrado:", response);
+          console.log(`📍 Progreso guardado en letra ${idx + 1}`);
           if (response.coinEarned) {
             console.log("🪙 +1 moneda ganada!");
           }
@@ -1246,6 +1258,7 @@ export default function TestsPage() {
   const [stats, setStats] = useState<UserStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAbcModal, setShowAbcModal] = useState(false);
+  const [abcStartIndex, setAbcStartIndex] = useState(0); // Índice inicial del abecedario
 
   // Cargar estadísticas del usuario
   const loadStats = useCallback(async (silent = false) => {
@@ -1313,6 +1326,10 @@ export default function TestsPage() {
     const isAbc =
       m.id.toLowerCase() === "abecedario" || m.name.toLowerCase() === "abecedario";
     if (isAbc) {
+      // Establecer índice inicial desde el progreso guardado
+      const startIdx = m.currentLetterIndex ?? 0;
+      setAbcStartIndex(startIdx);
+      console.log(`📚 Abriendo abecedario desde letra ${startIdx + 1}`);
       setShowAbcModal(true);
     } else {
       alert("Pronto disponible para este módulo.");
@@ -1454,6 +1471,7 @@ export default function TestsPage() {
         open={showAbcModal}
         onClose={() => setShowAbcModal(false)}
         onProgressUpdate={() => loadStats(true)} // silent = true para evitar re-renders
+        initialIndex={abcStartIndex} // Iniciar desde la letra guardada
       />
     </>
   );
