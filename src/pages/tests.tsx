@@ -1388,6 +1388,8 @@ export default function TestsPage() {
     if (isAbc) {
       // Establecer índice inicial desde el progreso guardado
       const startIdx = m.currentLetterIndex ?? 0;
+      console.log(`📚 onAction - Módulo recibido:`, m);
+      console.log(`📚 onAction - currentLetterIndex: ${m.currentLetterIndex}, startIdx: ${startIdx}`);
       setAbcStartIndex(startIdx);
       console.log(`📚 Abriendo abecedario desde letra ${startIdx + 1}`);
       setShowAbcModal(true);
