@@ -83,11 +83,13 @@ function AbecedarioTestModal({
   open,
   onClose,
   onProgressUpdate,
+  onSaveProgress,
   initialIndex = 0,
 }: {
   open: boolean;
   onClose: () => void;
   onProgressUpdate?: () => void;
+  onSaveProgress?: () => void;
   initialIndex?: number;
 }) {
   const [items, setItems] = useState<AbcMediaItem[]>([]);
@@ -805,6 +807,38 @@ function AbecedarioTestModal({
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <button
               onClick={() => {
+                console.log("💾 Guardando progreso manualmente...");
+                if (onSaveProgress) {
+                  onSaveProgress();
+                }
+                // Mostrar feedback visual
+                const btn = document.activeElement as HTMLButtonElement;
+                const originalText = btn.textContent;
+                btn.textContent = "✅ Guardado!";
+                btn.style.background = "#065f46";
+                setTimeout(() => {
+                  btn.textContent = originalText;
+                  btn.style.background = "#059669";
+                }, 1500);
+              }}
+              title="Guardar progreso actual y actualizar la barra"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 10px",
+                borderRadius: 8,
+                background: "#059669",
+                border: "1px solid #10b981",
+                color: "#e5e7eb",
+                cursor: "pointer",
+                fontWeight: 500,
+              }}
+            >
+              💾 Guardar Progreso
+            </button>
+            <button
+              onClick={() => {
                 // 🎭 DEMO: Marcar que la próxima seña debe ser rechazada
                 forceRejectNextRef.current = true;
                 console.log("🎭 DEMO: Botón 'Siguiente →' presionado - próxima seña será RECHAZADA");
@@ -1487,6 +1521,10 @@ export default function TestsPage() {
           loadStats(true);
         }}
         onProgressUpdate={() => loadStats(true)} // silent = true para evitar re-renders
+        onSaveProgress={() => {
+          console.log("🔄 Forzando actualización de estadísticas desde botón Guardar...");
+          loadStats(); // SIN silent - fuerza actualización visible
+        }}
         initialIndex={abcStartIndex} // Iniciar desde la letra guardada
       />
     </>
