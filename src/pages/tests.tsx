@@ -104,6 +104,7 @@ function AbecedarioTestModal({
   const rafRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const cameraReadyRef = useRef(false); // Para saber si la cámara está lista
+  const cameraInitializingRef = useRef(false); // Para evitar múltiples llamadas a startCamera
 
   // Sistema heurístico - Estados y refs
   type HeuristicState = "idle" | "countdown" | "capturing" | "analyzing" | "result";
@@ -428,11 +429,22 @@ function AbecedarioTestModal({
 
   // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
+    // Evitar múltiples inicializaciones
+    if (cameraInitializingRef.current || cameraReadyRef.current) {
+      console.log("⚠️ Cámara ya está inicializándose o ya está lista, ignorando llamada");
+      return;
+    }
+
+    cameraInitializingRef.current = true;
+    console.log("🎥 [startCamera] Iniciando proceso de inicialización...");
+
     try {
+      console.log("📷 Solicitando acceso a cámara...");
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false,
       });
+      console.log("✅ Stream de cámara obtenido");
       streamRef.current = stream;
 
       if (videoRef.current) {
@@ -512,16 +524,20 @@ function AbecedarioTestModal({
 
       // Marcar cámara como lista
       cameraReadyRef.current = true;
-      console.log("✅ Cámara inicializada correctamente");
+      cameraInitializingRef.current = false;
+      console.log("✅✅✅ Cámara COMPLETAMENTE inicializada y lista para usar ✅✅✅");
     } catch (err) {
-      console.error(err);
+      console.error("❌ Error en startCamera:", err);
       cameraReadyRef.current = false;
+      cameraInitializingRef.current = false;
       alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
     }
   }, []);
 
   // Limpieza
   const cleanup = useCallback(() => {
+    console.log("🧹 Limpiando recursos...");
+
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
 
@@ -545,26 +561,32 @@ function AbecedarioTestModal({
       countdownTimerRef.current = null;
     }
 
+    // Resetear flags de cámara
+    cameraReadyRef.current = false;
+    cameraInitializingRef.current = false;
+
     // Limpiar estado heurístico
     setHeuristicState("idle");
     heuristicStateRef.current = "idle";
     capturedFramesRef.current = [];
+
+    console.log("✅ Recursos limpiados");
   }, []);
 
   // Iniciar cámara PRIMERO, antes de cargar plantillas
   useEffect(() => {
     if (!open) {
-      cameraReadyRef.current = false;
       return;
     }
 
-    console.log("🎥 Iniciando cámara...");
+    console.log("🔵 [useEffect open] Modal abierto, iniciando cámara...");
     // Solo iniciar cámara cuando se abre el modal
+    // startCamera tiene protección interna para evitar múltiples llamadas
     startCamera();
 
     // Cleanup solo cuando se cierra el modal
     return () => {
-      cameraReadyRef.current = false;
+      console.log("🔴 [useEffect open] Modal cerrado, limpiando...");
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
