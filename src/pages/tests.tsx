@@ -332,10 +332,12 @@ function AbecedarioTestModal({
   }, [items.length]);
 
   // Cargar plantillas heurísticas cuando cambia la letra
+  // IMPORTANTE: Solo se ejecuta cuando cambia idx, NO cuando se abre el modal
   useEffect(() => {
     if (!open) return;
     const currentLabel = items[idx]?.label;
     if (!currentLabel) return;
+    if (items.length === 0) return; // Esperar a que items se carguen
 
     let active = true;
 
@@ -359,13 +361,22 @@ function AbecedarioTestModal({
         // Esperar a que la cámara esté lista antes de iniciar countdown
         if (!active) return;
 
-        // Esperar hasta que la cámara esté lista
+        // Esperar hasta que la cámara esté lista (máximo 5 segundos)
+        let attempts = 0;
+        const maxAttempts = 50; // 50 * 100ms = 5 segundos
         const waitForCamera = () => {
+          if (!active) return;
+
+          attempts++;
+
           if (cameraReadyRef.current) {
-            console.log(`🚀 Iniciando countdown para letra "${currentLabel}"`);
+            console.log(`✅ Cámara lista! Iniciando countdown para letra "${currentLabel}"`);
             startHeuristicCountdown();
+          } else if (attempts >= maxAttempts) {
+            console.error(`❌ Timeout esperando la cámara (${maxAttempts * 100}ms)`);
+            alert("La cámara tardó demasiado en inicializarse. Por favor cierra y vuelve a abrir el modal.");
           } else {
-            console.log(`⏳ Esperando a que la cámara esté lista...`);
+            console.log(`⏳ Esperando a que la cámara esté lista... (intento ${attempts}/${maxAttempts})`);
             setTimeout(waitForCamera, 100);
           }
         };
@@ -412,7 +423,8 @@ function AbecedarioTestModal({
         countdownTimerRef.current = null;
       }
     };
-  }, [open, idx, items, startHeuristicCountdown]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx, items.length]); // Solo cuando cambia la letra o se cargan los items
 
   // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
@@ -539,14 +551,20 @@ function AbecedarioTestModal({
     capturedFramesRef.current = [];
   }, []);
 
+  // Iniciar cámara PRIMERO, antes de cargar plantillas
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      cameraReadyRef.current = false;
+      return;
+    }
 
+    console.log("🎥 Iniciando cámara...");
     // Solo iniciar cámara cuando se abre el modal
     startCamera();
 
     // Cleanup solo cuando se cierra el modal
     return () => {
+      cameraReadyRef.current = false;
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
