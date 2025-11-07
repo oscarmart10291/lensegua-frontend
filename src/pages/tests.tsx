@@ -96,13 +96,14 @@ function AbecedarioTestModal({
   const [loading, setLoading] = useState(true);
   const [idx, setIdx] = useState(initialIndex);
 
-  // Actualizar idx cuando initialIndex cambie (al abrir modal)
+  // Actualizar idx cuando el modal se abre
   useEffect(() => {
     if (open) {
+      console.log(`🎯 Modal abierto - Estableciendo idx a initialIndex=${initialIndex}`);
       setIdx(initialIndex);
-      console.log(`🎯 Iniciando desde letra ${initialIndex + 1}`);
+      console.log(`🎯 Iniciando desde letra ${initialIndex + 1} (${String.fromCharCode(65 + initialIndex)})`);
     }
-  }, [open, initialIndex]);
+  }, [open]); // Solo depender de open, siempre usar initialIndex actual
 
   // Estado de detección
   const [score, setScore] = useState(0); // 0..100
