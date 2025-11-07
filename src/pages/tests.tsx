@@ -24,8 +24,14 @@ import { getAbecedarioMaybe as getAbecedarioUrls, AbcMediaItem } from "../lib/st
 import { Hands, HAND_CONNECTIONS, Results } from "@mediapipe/hands";
 import { drawConnectors } from "@mediapipe/drawing_utils";
 
-// 👇 TensorFlow.js para detección real
-import * as tf from "@tensorflow/tfjs";
+// 👇 Sistema heurístico de reconocimiento
+import {
+  loadTemplatesForLetter,
+  matchSequence,
+  DEFAULT_CONFIG,
+  type Sequence,
+  type LandmarkPoint,
+} from "../lib/heuristics";
 
 // 👇 API para progreso y monedas
 import { getUserStats, registrarIntento, UserStats } from "../lib/api";
@@ -55,62 +61,10 @@ function medalLabel(tier: MedalTier) {
   }
 }
 
-// =============== Configuración para detección ===============
-const CFG = {
-  MIRROR_X: true,
-  USE_Z_BY_F: (F: number) => F === 63,
-  SMOOTH_EMA: 0.5,
-  MIN_CONFIDENCE: 0.60, // 60% mínimo para marcar como correcta
-  DECAY_NOT_CONFIDENT: 0.90,
-  MODEL_URL: "/models/estatico_last/model.json",
-};
-
+// =============== Configuración ===============
 const MAX_ITEMS = 26; // todas las letras A-Z
-
-// =============== Helper para convertir landmarks a vector ===============
-function landmarksToVector(hand: MPPoint[], F: number): Float32Array {
-  const expectZ = CFG.USE_Z_BY_F(F);
-
-  let pts = hand.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0 }));
-  if (CFG.MIRROR_X) for (const p of pts) p.x = 1 - p.x;
-
-  // Origen en muñeca
-  const wrist = pts[0];
-  for (const p of pts) {
-    p.x -= wrist.x;
-    p.y -= wrist.y;
-    p.z -= wrist.z;
-  }
-
-  // Escala bbox
-  let minX = +Infinity,
-    minY = +Infinity,
-    maxX = -Infinity,
-    maxY = -Infinity;
-  for (const p of pts) {
-    if (p.x < minX) minX = p.x;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.y > maxY) maxY = p.y;
-  }
-  const scale = Math.max(1e-6, Math.hypot(maxX - minX, maxY - minY));
-  for (const p of pts) {
-    p.x /= scale;
-    p.y /= scale;
-    p.z /= scale;
-  }
-
-  const out: number[] = [];
-  for (const p of pts) {
-    out.push(p.x, p.y);
-    if (expectZ) out.push(p.z);
-  }
-
-  if (out.length < F) while (out.length < F) out.push(0);
-  else if (out.length > F) out.length = F;
-
-  return new Float32Array(out);
-}
+const COUNTDOWN_SECONDS = 3; // Cuenta regresiva antes de capturar
+const CAPTURE_SECONDS = 3; // Tiempo de captura de landmarks
 
 // =============== Modal interno para el Test Abecedario ===============
 function AbecedarioTestModal({
@@ -126,10 +80,18 @@ function AbecedarioTestModal({
   const [loading, setLoading] = useState(true);
   const [idx, setIdx] = useState(0);
 
-  // Estado de detección
-  const [score, setScore] = useState(0); // 0..1
-  const [correct, setCorrect] = useState(false);
-  const autoNextRef = useRef<number | null>(null);
+  // Estados del workflow: idle → countdown → capturing → analyzing → result
+  type Phase = "idle" | "countdown" | "capturing" | "analyzing" | "result";
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
+  const [captureProgress, setCaptureProgress] = useState(0);
+
+  // Resultado del análisis heurístico
+  const [matchResult, setMatchResult] = useState<{
+    decision: "accepted" | "rejected" | "ambiguous";
+    score: number;
+    distance: number;
+  } | null>(null);
 
   // Refs para cámara y MediaPipe
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -138,17 +100,13 @@ function AbecedarioTestModal({
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
-  const lastInferAtRef = useRef(0);
 
-  // Modelo de TensorFlow
-  const modelRef = useRef<tf.LayersModel | null>(null);
-  const [inputKind, setInputKind] = useState<"vector" | "sequence" | null>(null);
-  const [vecLen, setVecLen] = useState<number | null>(null);
-  const [seqShape, setSeqShape] = useState<{ T: number; F: number } | null>(null);
-  const seqBufferRef = useRef<number[][]>([]);
-
-  // Mapeo de clases
-  const [classIndex, setClassIndex] = useState<Record<string, number> | null>(null);
+  // Captura de landmarks para análisis heurístico
+  const capturedSequenceRef = useRef<Sequence>([]);
+  const captureStartTimeRef = useRef<number>(0);
+  const phaseRef = useRef<Phase>("idle");
+  const countdownIntervalRef = useRef<number | null>(null);
+  const autoNextRef = useRef<number | null>(null);
 
   // Cargar imágenes del abecedario desde Firebase
   useEffect(() => {
@@ -174,75 +132,27 @@ function AbecedarioTestModal({
     };
   }, [open]);
 
-  // Reiniciar score al cambiar de letra
-  const resetScoreForCurrent = useCallback(() => {
-    setScore(0);
-    setCorrect(false);
+  // Reiniciar estado al cambiar de letra
+  const resetForCurrentLetter = useCallback(() => {
+    setPhase("idle");
+    setMatchResult(null);
+    setCaptureProgress(0);
+    setCountdown(COUNTDOWN_SECONDS);
+    capturedSequenceRef.current = [];
     if (autoNextRef.current) {
       window.clearTimeout(autoNextRef.current);
       autoNextRef.current = null;
+    }
+    if (countdownIntervalRef.current) {
+      window.clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
     }
   }, []);
 
   useEffect(() => {
     if (!open) return;
-    resetScoreForCurrent();
-  }, [open, idx, resetScoreForCurrent]);
-
-  // Cargar modelo de TensorFlow
-  useEffect(() => {
-    if (!open) return;
-    let active = true;
-
-    (async () => {
-      try {
-        await tf.ready();
-        const m = await tf.loadLayersModel(CFG.MODEL_URL);
-        if (!active) return;
-        modelRef.current = m;
-
-        const inShape = m.inputs[0].shape as (number | null)[];
-        if (inShape.length === 2) {
-          setInputKind("vector");
-          setVecLen(Number(inShape[1]));
-        } else if (inShape.length === 3) {
-          setInputKind("sequence");
-          setSeqShape({ T: Number(inShape[1]), F: Number(inShape[2]) });
-        }
-
-        console.log("✅ Modelo cargado:", CFG.MODEL_URL);
-      } catch (err) {
-        console.error("❌ Error al cargar modelo:", err);
-      }
-    })();
-
-    return () => {
-      active = false;
-      modelRef.current = null;
-    };
-  }, [open]);
-
-  // Cargar mapeo de clases
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const base = CFG.MODEL_URL.replace(/\/model\.json$/i, "");
-        const resp = await fetch(`${base}/class_index.json`, { cache: "no-store" });
-        const fromFile = resp.ok ? await resp.json() : null;
-        if (cancelled) return;
-        if (fromFile) setClassIndex(fromFile);
-      } catch (err) {
-        console.warn("⚠️ No se pudo cargar class_index.json:", err);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
+    resetForCurrentLetter();
+  }, [open, idx, resetForCurrentLetter]);
 
   // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
@@ -305,10 +215,26 @@ function AbecedarioTestModal({
         }
         ctx.restore();
 
-        const now = performance.now();
-        if (now - lastInferAtRef.current > 225) {
-          lastInferAtRef.current = now;
-          inferScore(results);
+        // Capturar landmarks durante la fase de captura
+        if (phaseRef.current === "capturing" && hand) {
+          const frame: LandmarkPoint[] = hand.map((p: MPPoint) => ({
+            x: p.x,
+            y: p.y,
+            z: p.z ?? 0,
+          }));
+          capturedSequenceRef.current.push(frame);
+
+          // Actualizar progreso
+          const elapsed = performance.now() - captureStartTimeRef.current;
+          const progress = Math.min(100, (elapsed / (CAPTURE_SECONDS * 1000)) * 100);
+          setCaptureProgress(progress);
+
+          // Si completamos la captura, analizar
+          if (elapsed >= CAPTURE_SECONDS * 1000) {
+            phaseRef.current = "analyzing";
+            setPhase("analyzing");
+            analyzeCapture();
+          }
         }
       });
 
@@ -329,110 +255,118 @@ function AbecedarioTestModal({
     }
   }, []);
 
-  // Inferencia con el modelo
-  const inferScore = async (results: Results) => {
-    const model = modelRef.current;
-    if (!model || !inputKind) return;
+  // Iniciar cuenta regresiva
+  const startCountdown = useCallback(() => {
+    setPhase("countdown");
+    phaseRef.current = "countdown";
+    setCountdown(COUNTDOWN_SECONDS);
+    capturedSequenceRef.current = [];
+    setCaptureProgress(0);
 
-    const hand = results.multiHandLandmarks?.[0];
-    if (!hand) {
-      setScore((prev) => prev * CFG.DECAY_NOT_CONFIDENT);
-      return;
-    }
+    let remaining = COUNTDOWN_SECONDS;
+    countdownIntervalRef.current = window.setInterval(() => {
+      remaining -= 1;
+      setCountdown(remaining);
 
+      if (remaining <= 0) {
+        if (countdownIntervalRef.current) {
+          window.clearInterval(countdownIntervalRef.current);
+          countdownIntervalRef.current = null;
+        }
+        // Iniciar captura
+        phaseRef.current = "capturing";
+        setPhase("capturing");
+        captureStartTimeRef.current = performance.now();
+      }
+    }, 1000);
+  }, []);
+
+  // Analizar la secuencia capturada con heurística
+  const analyzeCapture = useCallback(async () => {
     const currentLabel = items[idx]?.label;
-    if (!currentLabel || !classIndex) {
-      setScore((prev) => prev * CFG.DECAY_NOT_CONFIDENT);
+    if (!currentLabel) {
+      setMatchResult({
+        decision: "rejected",
+        score: 0,
+        distance: Infinity,
+      });
+      setPhase("result");
       return;
     }
 
-    const mappedIdx = classIndex[currentLabel];
-    if (typeof mappedIdx !== "number") {
-      setScore((prev) => prev * CFG.DECAY_NOT_CONFIDENT);
+    const captured = capturedSequenceRef.current;
+    if (captured.length === 0) {
+      setMatchResult({
+        decision: "rejected",
+        score: 0,
+        distance: Infinity,
+      });
+      setPhase("result");
       return;
     }
 
     try {
-      let probsArr: Float32Array | number[] | null = null;
+      // Cargar plantillas para la letra actual
+      const templates = await loadTemplatesForLetter("/landmarks", currentLabel, 3);
 
-      if (inputKind === "vector" && vecLen) {
-        const frameVec = landmarksToVector(hand as MPPoint[], vecLen);
-        probsArr = await tf.tidy(() => {
-          const x = tf.tensor(frameVec, [1, vecLen]);
-          const out = model.predict(x) as tf.Tensor;
-          const soft = tf.softmax(out);
-          return soft.dataSync();
+      if (templates.length === 0) {
+        setMatchResult({
+          decision: "rejected",
+          score: 0,
+          distance: Infinity,
         });
-      } else if (inputKind === "sequence" && seqShape) {
-        const { T, F } = seqShape;
-        const frameVec = landmarksToVector(hand as MPPoint[], F);
-        const buf = seqBufferRef.current;
-        buf.push(Array.from(frameVec));
-        if (buf.length > T) buf.shift();
-        const pad = Array.from({ length: Math.max(0, T - buf.length) }, () =>
-          new Array(F).fill(0)
-        );
-        const win = pad.concat(buf);
-        probsArr = await tf.tidy(() => {
-          const x = tf.tensor(win, [1, T, F]);
-          const out = model.predict(x) as tf.Tensor;
-          const soft = tf.softmax(out);
-          return soft.dataSync();
-        });
+        setPhase("result");
+        return;
       }
 
-      if (!probsArr) return;
+      // Ejecutar matching heurístico (sin impostores por ahora para simplificar)
+      const result = matchSequence(captured, templates, DEFAULT_CONFIG);
 
-      const labelProb = probsArr[mappedIdx] ?? 0;
-
-      // Actualizar score con EMA
-      setScore((prev) => {
-        const ema = prev * CFG.SMOOTH_EMA + labelProb * (1 - CFG.SMOOTH_EMA);
-        const newScore = labelProb > 0 ? ema : ema * CFG.DECAY_NOT_CONFIDENT;
-
-        // Si alcanza el umbral y no está marcado como correcto
-        if (newScore >= CFG.MIN_CONFIDENCE && !correct) {
-          setCorrect(true);
-
-          // Registrar intento en la base de datos
-          const precision = Math.round(newScore * 100);
-          registrarIntento("abecedario", precision, true)
-            .then((response) => {
-              console.log("✅ Intento registrado:", response);
-              if (response.coinEarned) {
-                console.log("🪙 +1 moneda ganada!");
-              }
-              if (onProgressUpdate) {
-                onProgressUpdate();
-              }
-            })
-            .catch((err) => {
-              console.error("❌ Error al registrar intento:", err);
-            });
-
-          // Auto-avanzar a la siguiente letra
-          if (!autoNextRef.current) {
-            autoNextRef.current = window.setTimeout(() => {
-              autoNextRef.current = null;
-              setCorrect(false);
-              setIdx((p) => {
-                const nextIdx = p + 1;
-                if (nextIdx >= items.length) {
-                  alert("¡Test finalizado! ✅");
-                  return p;
-                }
-                return nextIdx;
-              });
-            }, 1200);
-          }
-        }
-
-        return newScore;
+      setMatchResult({
+        decision: result.decision,
+        score: result.score,
+        distance: result.distance,
       });
+      setPhase("result");
+
+      // Si fue aceptado, registrar en la base de datos
+      if (result.decision === "accepted") {
+        const precision = Math.round(result.score);
+        registrarIntento("abecedario", precision, true)
+          .then((response) => {
+            console.log("✅ Intento registrado:", response);
+            if (response.coinEarned) {
+              console.log("🪙 +1 moneda ganada!");
+            }
+            if (onProgressUpdate) {
+              onProgressUpdate();
+            }
+          })
+          .catch((err) => {
+            console.error("❌ Error al registrar intento:", err);
+          });
+
+        // Auto-avanzar a la siguiente letra después de 2 segundos
+        autoNextRef.current = window.setTimeout(() => {
+          autoNextRef.current = null;
+          const nextIdx = idx + 1;
+          if (nextIdx >= items.length) {
+            alert("¡Test finalizado! ✅");
+          } else {
+            setIdx(nextIdx);
+          }
+        }, 2000);
+      }
     } catch (err) {
-      console.error("Error en inferencia:", err);
+      console.error("Error al analizar captura:", err);
+      setMatchResult({
+        decision: "rejected",
+        score: 0,
+        distance: Infinity,
+      });
+      setPhase("result");
     }
-  };
+  }, [items, idx, onProgressUpdate]);
 
   // Limpieza
   const cleanup = useCallback(() => {
@@ -453,6 +387,13 @@ function AbecedarioTestModal({
       window.clearTimeout(autoNextRef.current);
       autoNextRef.current = null;
     }
+
+    if (countdownIntervalRef.current) {
+      window.clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+
+    phaseRef.current = "idle";
   }, []);
 
   useEffect(() => {
@@ -462,8 +403,6 @@ function AbecedarioTestModal({
   }, [open, startCamera, cleanup]);
 
   if (!open) return null;
-
-  const pct = Math.round(score * 100);
 
   return (
     <div
@@ -506,7 +445,7 @@ function AbecedarioTestModal({
         >
           <Camera size={18} />
           <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>
-            Prueba: Abecedario (Detección Real)
+            Prueba: Abecedario (Sistema Heurístico)
           </h3>
           <div style={{ marginLeft: "auto" }}>
             <button
@@ -653,7 +592,7 @@ function AbecedarioTestModal({
             }}
           >
             <div style={{ padding: 10, borderBottom: "1px solid #1f2937" }}>
-              <strong>Cámara (Detección Real con TensorFlow.js)</strong>
+              <strong>Cámara (Detección con Sistema Heurístico)</strong>
             </div>
 
             <div
@@ -687,104 +626,150 @@ function AbecedarioTestModal({
               />
             </div>
 
-            {/* Barra de coincidencia */}
+            {/* Estado del proceso */}
             <div
               style={{
                 padding: 12,
                 borderTop: "1px solid #1f2937",
+                minHeight: 80,
                 display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
                 alignItems: "center",
                 gap: 10,
               }}
             >
-              <div style={{ minWidth: 140, fontSize: 13, opacity: 0.85 }}>
-                Nivel de coincidencia
-              </div>
-              <div
-                aria-label="Nivel de coincidencia"
-                style={{
-                  position: "relative",
-                  flex: 1,
-                  height: 14,
-                  background: "#111827",
-                  border: "1px solid #1f2937",
-                  borderRadius: 999,
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    width: `${pct}%`,
-                    height: "100%",
-                    background: pct >= 60 ? "#16a34a" : "#2563eb",
-                    transition: "width 120ms linear",
-                  }}
-                />
-                <div
-                  style={{
-                    position: "absolute",
-                    right: 8,
-                    top: 0,
-                    bottom: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    fontSize: 12,
-                    opacity: 0.9,
-                  }}
-                >
-                  {pct}%
-                </div>
-              </div>
-
-              {correct ? (
-                <span
+              {phase === "idle" && (
+                <button
+                  onClick={startCountdown}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 6,
-                    fontSize: 13,
-                    color: "#22c55e",
+                    gap: 8,
+                    padding: "12px 24px",
+                    borderRadius: 8,
+                    background: "#2563eb",
+                    border: "1px solid #1e40af",
+                    color: "white",
+                    cursor: "pointer",
+                    fontSize: 14,
                     fontWeight: 600,
-                    whiteSpace: "nowrap",
                   }}
                 >
-                  <CheckCircle size={16} /> ¡Correcto!
-                </span>
-              ) : (
-                <span style={{ fontSize: 12, opacity: 0.7, whiteSpace: "nowrap" }}>
-                  Mínimo: 60%
-                </span>
+                  <Camera size={18} /> Comenzar prueba
+                </button>
               )}
-            </div>
 
-            <div
-              style={{
-                display: "flex",
-                gap: 8,
-                padding: 10,
-                borderTop: "1px solid #1f2937",
-              }}
-            >
-              <button
-                onClick={() => {
-                  resetScoreForCurrent();
-                  startCamera();
-                }}
-                title="Reiniciar cámara"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  background: "#111827",
-                  border: "1px solid #1f2937",
-                  color: "#e5e7eb",
-                  cursor: "pointer",
-                }}
-              >
-                <Camera size={16} /> Reiniciar cámara
-              </button>
+              {phase === "countdown" && (
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 48, fontWeight: 700, color: "#f59e0b" }}>
+                    {countdown}
+                  </div>
+                  <div style={{ fontSize: 14, opacity: 0.8, marginTop: 4 }}>
+                    Prepárate...
+                  </div>
+                </div>
+              )}
+
+              {phase === "capturing" && (
+                <div style={{ width: "100%", textAlign: "center" }}>
+                  <div style={{ fontSize: 14, marginBottom: 8, color: "#22c55e" }}>
+                    ¡Capturando! Mantén la seña...
+                  </div>
+                  <div
+                    style={{
+                      width: "100%",
+                      height: 14,
+                      background: "#111827",
+                      border: "1px solid #1f2937",
+                      borderRadius: 999,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${captureProgress}%`,
+                        height: "100%",
+                        background: "#22c55e",
+                        transition: "width 100ms linear",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {phase === "analyzing" && (
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: "#3b82f6" }}>
+                    Analizando...
+                  </div>
+                </div>
+              )}
+
+              {phase === "result" && matchResult && (
+                <div style={{ width: "100%", textAlign: "center" }}>
+                  {matchResult.decision === "accepted" ? (
+                    <>
+                      <div
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                          fontSize: 16,
+                          color: "#22c55e",
+                          fontWeight: 600,
+                          marginBottom: 6,
+                        }}
+                      >
+                        <CheckCircle size={20} /> ¡Correcto!
+                      </div>
+                      <div style={{ fontSize: 13, opacity: 0.8 }}>
+                        Score: {Math.round(matchResult.score)}%
+                      </div>
+                      <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+                        Avanzando a la siguiente...
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div
+                        style={{
+                          fontSize: 16,
+                          color: matchResult.decision === "rejected" ? "#ef4444" : "#f59e0b",
+                          fontWeight: 600,
+                          marginBottom: 6,
+                        }}
+                      >
+                        {matchResult.decision === "rejected" ? "Rechazado" : "Incierto"}
+                      </div>
+                      <div style={{ fontSize: 13, opacity: 0.8 }}>
+                        Score: {Math.round(matchResult.score)}%
+                      </div>
+                      <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+                        Distancia: {matchResult.distance.toFixed(2)}
+                      </div>
+                      <button
+                        onClick={() => {
+                          resetForCurrentLetter();
+                          startCountdown();
+                        }}
+                        style={{
+                          marginTop: 10,
+                          padding: "8px 16px",
+                          borderRadius: 8,
+                          background: "#2563eb",
+                          border: "1px solid #1e40af",
+                          color: "white",
+                          cursor: "pointer",
+                          fontSize: 13,
+                        }}
+                      >
+                        Reintentar
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
