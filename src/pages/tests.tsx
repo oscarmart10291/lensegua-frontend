@@ -159,8 +159,152 @@ function AbecedarioTestModal({
     resetScoreForCurrent();
   }, [open, idx, resetScoreForCurrent]);
 
+  // Analizar secuencia capturada con el sistema heurístico
+  const analyzeCapture = useCallback(async () => {
+    const captured = capturedFramesRef.current;
+    const currentLabel = items[idx]?.label;
+
+    console.log(`\n======================================`);
+    console.log(`🔍 ANÁLISIS DE SEÑA: "${currentLabel}"`);
+    console.log(`======================================`);
+
+    // Cambiar a estado "analyzing"
+    setHeuristicState("analyzing");
+    heuristicStateRef.current = "analyzing";
+
+    if (captured.length < HEURISTIC_CFG.MIN_FRAMES) {
+      console.log(`⚠️ Pocos frames capturados: ${captured.length} < ${HEURISTIC_CFG.MIN_FRAMES}`);
+      setHeuristicResult({
+        score: 0,
+        decision: "rejected",
+        distance: 999,
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
+      return;
+    }
+
+    if (!currentLabel) {
+      console.log("⚠️ No hay letra seleccionada");
+      setHeuristicState("idle");
+      heuristicStateRef.current = "idle";
+      return;
+    }
+
+    try {
+      const targetTemplates = templatesRef.current;
+
+      if (targetTemplates.length === 0) {
+        console.warn(`⚠️ No hay plantillas para "${currentLabel}"`);
+        setHeuristicResult({
+          score: 0,
+          decision: "rejected",
+          distance: 999,
+        });
+        setHeuristicState("result");
+        heuristicStateRef.current = "result";
+        return;
+      }
+
+      // Seleccionar impostores (otras letras)
+      const impostors = selectImpostorTemplates(templateDictRef.current, currentLabel, 5);
+      console.log(`👥 Impostores seleccionados: ${impostors.length} letras diferentes`);
+
+      console.log(`🔍 Analizando ${captured.length} frames contra ${targetTemplates.length} plantillas de "${currentLabel}"`);
+
+      // Ejecutar matching con 4 checks
+      const result = matchSequence(captured, targetTemplates, DEFAULT_CONFIG, impostors);
+
+      const finalScore = Math.round(result.score);
+
+      console.log(`\n📈 RESULTADO:`);
+      console.log(`   Score: ${finalScore}%`);
+      console.log(`   Decision: ${result.decision}`);
+      console.log(`   Distance: ${result.distance.toFixed(4)}`);
+      console.log(`   Mejor plantilla: ${result.bestTemplateId}`);
+      if (result.topCandidates && result.topCandidates.length > 0) {
+        console.log(`   Top 3 candidatos:`);
+        result.topCandidates.forEach((c, i) => {
+          console.log(`      ${i + 1}. ${c.letter}: ${c.distance.toFixed(4)}`);
+        });
+      }
+      console.log(`======================================\n`);
+
+      setScore(finalScore);
+      setHeuristicResult({
+        score: finalScore,
+        decision: result.decision,
+        distance: result.distance,
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
+
+      // Si es correcto, registrar en DB y auto-avanzar
+      if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE) {
+        setCorrect(true);
+
+        registrarIntento("abecedario", finalScore, true)
+          .then((response) => {
+            console.log("✅ Intento registrado:", response);
+            if (response.coinEarned) {
+              console.log("🪙 +1 moneda ganada!");
+            }
+            if (onProgressUpdate) {
+              onProgressUpdate();
+            }
+          })
+          .catch((err) => {
+            console.error("❌ Error al registrar intento:", err);
+          });
+
+        // Auto-avanzar a la siguiente letra después de 2 segundos
+        autoNextRef.current = window.setTimeout(() => {
+          autoNextRef.current = null;
+          setCorrect(false);
+          setIdx((p) => {
+            const nextIdx = p + 1;
+            if (nextIdx >= items.length) {
+              alert("¡Test finalizado! ✅");
+              return p;
+            }
+            return nextIdx;
+          });
+        }, 2000);
+      }
+    } catch (err) {
+      console.error("❌ Error en análisis heurístico:", err);
+      setHeuristicResult({
+        score: 0,
+        decision: "rejected",
+        distance: 999,
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
+    }
+  }, [items, idx, onProgressUpdate]);
+
   // Funciones para el flujo heurístico
+  const startCapture = useCallback(() => {
+    console.log("🎬 Iniciando captura...");
+    setHeuristicState("capturing");
+    heuristicStateRef.current = "capturing";
+    setCountdown(3); // 3 segundos para realizar la seña
+    capturedFramesRef.current = [];
+
+    let count = 3;
+    countdownTimerRef.current = window.setInterval(() => {
+      count--;
+      setCountdown(count);
+      if (count === 0) {
+        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+        console.log("⏱️ Countdown terminado, iniciando análisis...");
+        analyzeCapture();
+      }
+    }, 1000);
+  }, [analyzeCapture]);
+
   const startHeuristicCountdown = useCallback(() => {
+    console.log("⏰ Iniciando countdown de preparación...");
     setHeuristicState("countdown");
     heuristicStateRef.current = "countdown";
     setCountdown(3);
@@ -175,24 +319,7 @@ function AbecedarioTestModal({
         startCapture();
       }
     }, 1000);
-  }, []);
-
-  const startCapture = useCallback(() => {
-    setHeuristicState("capturing");
-    heuristicStateRef.current = "capturing";
-    setCountdown(3); // 3 segundos para realizar la seña
-    capturedFramesRef.current = [];
-
-    let count = 3;
-    countdownTimerRef.current = window.setInterval(() => {
-      count--;
-      setCountdown(count);
-      if (count === 0) {
-        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-        analyzeCapture();
-      }
-    }, 1000);
-  }, []);
+  }, [startCapture]);
 
   const retryHeuristic = useCallback(() => {
     setHeuristicResult(null);
@@ -341,130 +468,6 @@ function AbecedarioTestModal({
       alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
     }
   }, []);
-
-  // Analizar secuencia capturada con el sistema heurístico
-  const analyzeCapture = useCallback(async () => {
-    const captured = capturedFramesRef.current;
-    const currentLabel = items[idx]?.label;
-
-    console.log(`\n======================================`);
-    console.log(`🔍 ANÁLISIS DE SEÑA: "${currentLabel}"`);
-    console.log(`======================================`);
-
-    // Cambiar a estado "analyzing"
-    setHeuristicState("analyzing");
-    heuristicStateRef.current = "analyzing";
-
-    if (captured.length < HEURISTIC_CFG.MIN_FRAMES) {
-      console.log(`⚠️ Pocos frames capturados: ${captured.length} < ${HEURISTIC_CFG.MIN_FRAMES}`);
-      setHeuristicResult({
-        score: 0,
-        decision: "rejected",
-        distance: 999,
-      });
-      setHeuristicState("result");
-      heuristicStateRef.current = "result";
-      return;
-    }
-
-    if (!currentLabel) {
-      console.log("⚠️ No hay letra seleccionada");
-      setHeuristicState("idle");
-      heuristicStateRef.current = "idle";
-      return;
-    }
-
-    try {
-      const targetTemplates = templatesRef.current;
-
-      if (targetTemplates.length === 0) {
-        console.warn(`⚠️ No hay plantillas para "${currentLabel}"`);
-        setHeuristicResult({
-          score: 0,
-          decision: "rejected",
-          distance: 999,
-        });
-        setHeuristicState("result");
-        heuristicStateRef.current = "result";
-        return;
-      }
-
-      // Seleccionar impostores (otras letras)
-      const impostors = selectImpostorTemplates(templateDictRef.current, currentLabel, 5);
-      console.log(`👥 Impostores seleccionados: ${impostors.length} letras diferentes`);
-
-      console.log(`🔍 Analizando ${captured.length} frames contra ${targetTemplates.length} plantillas de "${currentLabel}"`);
-
-      // Ejecutar matching con 4 checks
-      const result = matchSequence(captured, targetTemplates, DEFAULT_CONFIG, impostors);
-
-      const finalScore = Math.round(result.score);
-
-      console.log(`\n📈 RESULTADO:`);
-      console.log(`   Score: ${finalScore}%`);
-      console.log(`   Decision: ${result.decision}`);
-      console.log(`   Distance: ${result.distance.toFixed(4)}`);
-      console.log(`   Mejor plantilla: ${result.bestTemplateId}`);
-      if (result.topCandidates && result.topCandidates.length > 0) {
-        console.log(`   Top 3 candidatos:`);
-        result.topCandidates.forEach((c, i) => {
-          console.log(`      ${i + 1}. ${c.letter}: ${c.distance.toFixed(4)}`);
-        });
-      }
-      console.log(`======================================\n`);
-
-      setScore(finalScore);
-      setHeuristicResult({
-        score: finalScore,
-        decision: result.decision,
-        distance: result.distance,
-      });
-      setHeuristicState("result");
-      heuristicStateRef.current = "result";
-
-      // Si es correcto, registrar en DB y auto-avanzar
-      if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE) {
-        setCorrect(true);
-
-        registrarIntento("abecedario", finalScore, true)
-          .then((response) => {
-            console.log("✅ Intento registrado:", response);
-            if (response.coinEarned) {
-              console.log("🪙 +1 moneda ganada!");
-            }
-            if (onProgressUpdate) {
-              onProgressUpdate();
-            }
-          })
-          .catch((err) => {
-            console.error("❌ Error al registrar intento:", err);
-          });
-
-        // Auto-avanzar a la siguiente letra después de 2 segundos
-        autoNextRef.current = window.setTimeout(() => {
-          autoNextRef.current = null;
-          setCorrect(false);
-          setIdx((p) => {
-            const nextIdx = p + 1;
-            if (nextIdx >= items.length) {
-              alert("¡Test finalizado! ✅");
-              return p;
-            }
-            return nextIdx;
-          });
-        }, 2000);
-      }
-    } catch (err) {
-      console.error("❌ Error en análisis heurístico:", err);
-      setHeuristicResult({
-        score: 0,
-        decision: "rejected",
-        distance: 999,
-      });
-      setHeuristicState("result");
-      heuristicStateRef.current = "result";
-    }
-  }, [items, idx, onProgressUpdate]);
 
   // Limpieza
   const cleanup = useCallback(() => {
