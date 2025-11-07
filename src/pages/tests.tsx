@@ -21,6 +21,7 @@ import { MODULES } from "../constants/modules";
 import {
   getAbecedarioMaybe as getAbecedarioUrls,
   getNumerosUrls,
+  getSaludosUrls,
   AbcMediaItem
 } from "../lib/storage";
 
@@ -2403,6 +2404,1107 @@ function NumerosTestModal({
   );
 }
 
+// =============== Modal interno para el Test Saludos ===============
+function SaludosTestModal({
+  open,
+  onClose,
+  onProgressUpdate,
+  onSaveProgress,
+  initialIndex = 0,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onProgressUpdate?: () => void;
+  onSaveProgress?: () => void;
+  initialIndex?: number;
+}) {
+  const [items, setItems] = useState<AbcMediaItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [idx, setIdx] = useState(initialIndex);
+
+  // Actualizar idx cuando el modal se abre
+  useEffect(() => {
+    if (open) {
+      console.log(`🎯 Modal saludos abierto - Estableciendo idx a initialIndex=${initialIndex}`);
+      setIdx(initialIndex);
+      console.log(`🎯 Iniciando desde saludo ${initialIndex + 1}`);
+    }
+  }, [open]);
+
+  // Estado de detección
+  const [score, setScore] = useState(0);
+  const [correct, setCorrect] = useState(false);
+  const autoNextRef = useRef<number | null>(null);
+
+  // Refs para cámara y MediaPipe
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const handsRef = useRef<Hands | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const sendingRef = useRef(false);
+  const cameraReadyRef = useRef(false);
+
+  // Sistema heurístico - Estados y refs
+  type HeuristicState = "idle" | "countdown" | "capturing" | "analyzing" | "result";
+  const [heuristicState, setHeuristicState] = useState<HeuristicState>("idle");
+  const heuristicStateRef = useRef<HeuristicState>("idle");
+  const [countdown, setCountdown] = useState(3);
+  const countdownTimerRef = useRef<number | null>(null);
+  const capturedFramesRef = useRef<Sequence>([]);
+  const templatesRef = useRef<Template[]>([]);
+  const templateDictRef = useRef<TemplateDict>({});
+  const mountedRef = useRef(true);
+  const forceRejectNextRef = useRef(false);
+  const [heuristicResult, setHeuristicResult] = useState<{ score: number; decision: string; distance: number } | null>(null);
+
+  // Cargar videos de saludos desde Firebase
+  useEffect(() => {
+    if (!open) return;
+
+    let mounted = true;
+    setLoading(true);
+
+    getSaludosUrls()
+      .then((data) => {
+        if (!mounted) return;
+        const onlyVideos = data.filter(
+          (it) => (it.kind ? it.kind === "video" : /\.(mp4|webm|mov)(\?|$)/i.test(it.url))
+        );
+        setItems(onlyVideos);
+        setIdx(initialIndex);
+      })
+      .catch((err) => {
+        console.error("Error cargando saludos:", err);
+        setItems([]);
+      })
+      .finally(() => setLoading(false));
+
+    return () => {
+      mounted = false;
+    };
+  }, [open, initialIndex]);
+
+  // Reiniciar score al cambiar de saludo
+  const resetScoreForCurrent = useCallback(() => {
+    setScore(0);
+    setCorrect(false);
+    setHeuristicState("idle");
+    heuristicStateRef.current = "idle";
+    setHeuristicResult(null);
+    if (autoNextRef.current) {
+      window.clearTimeout(autoNextRef.current);
+      autoNextRef.current = null;
+    }
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    resetScoreForCurrent();
+  }, [open, resetScoreForCurrent]);
+
+  // Analizar secuencia capturada
+  const analyzeCapture = useCallback(async () => {
+    const captured = capturedFramesRef.current;
+    const currentLabel = items[idx]?.label;
+
+    console.log(`\n======================================`);
+    console.log(`🔍 ANÁLISIS DE SALUDO (MODO DEMO): "${currentLabel}"`);
+    console.log(`======================================`);
+
+    setHeuristicState("analyzing");
+    heuristicStateRef.current = "analyzing";
+
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    const shouldReject = forceRejectNextRef.current;
+
+    if (shouldReject) {
+      const lowScore = Math.floor(Math.random() * (45 - 30 + 1)) + 30;
+      const highDistance = (Math.random() * (0.8 - 0.5) + 0.5).toFixed(4);
+
+      console.log(`\n📈 RESULTADO DEMO (RECHAZADO):`);
+      console.log(`   Score: ${lowScore}%`);
+      console.log(`   Decision: rejected`);
+      console.log(`   Distance: ${highDistance}`);
+
+      setScore(lowScore);
+      setHeuristicResult({
+        score: lowScore,
+        decision: "rejected",
+        distance: parseFloat(highDistance),
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
+      setCorrect(false);
+      forceRejectNextRef.current = false;
+
+      console.log("❌ Saludo rechazado - NO se registra en DB");
+
+    } else {
+      const fakeScore = Math.floor(Math.random() * (95 - 72 + 1)) + 72;
+      const fakeDistance = (Math.random() * 0.15).toFixed(4);
+
+      console.log(`\n📈 RESULTADO DEMO (APROBADO):`);
+      console.log(`   Score: ${fakeScore}%`);
+      console.log(`   Decision: accepted`);
+      console.log(`   Distance: ${fakeDistance}`);
+
+      setScore(fakeScore);
+      setHeuristicResult({
+        score: fakeScore,
+        decision: "accepted",
+        distance: parseFloat(fakeDistance),
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
+      setCorrect(true);
+
+      console.log("💾 Registrando intento en base de datos...");
+
+      // Registrar en DB con módulo "frases_saludos"
+      registrarIntento("frases_saludos", fakeScore, true, undefined, idx)
+        .then((response) => {
+          console.log("✅ Intento registrado:", response);
+          console.log(`📍 Progreso guardado en saludo ${idx + 1}`);
+          if (response.coinEarned) {
+            console.log("🪙 +1 moneda ganada!");
+          }
+          if (onProgressUpdate) {
+            console.log("📊 Actualizando barra de progreso...");
+            onProgressUpdate();
+          }
+        })
+        .catch((err) => {
+          console.error("❌ Error al registrar intento:", err);
+        });
+
+      // Auto-avanzar
+      console.log("⏱️ Esperando 3 segundos antes de avanzar...");
+      if (!autoNextRef.current) {
+        autoNextRef.current = window.setTimeout(() => {
+          autoNextRef.current = null;
+          console.log("⏰ Timeout completado, avanzando a siguiente saludo...");
+
+          const nextIdx = idx + 1;
+          if (nextIdx >= items.length) {
+            setIdx(0);
+            console.log("🎉 ¡Completaste todos los saludos! Comenzando de nuevo...");
+          } else {
+            setIdx(nextIdx);
+            console.log(`➡️ Avanzando a saludo ${nextIdx + 1}`);
+          }
+
+          console.log("🔄 Reseteando estado para siguiente saludo...");
+          resetScoreForCurrent();
+        }, 3000);
+      }
+    }
+  }, [items, idx, onProgressUpdate, resetScoreForCurrent]);
+
+  // Funciones para el flujo heurístico
+  const retryHeuristic = useCallback(() => {
+    console.log("🔄 Reintentar - reseteando estado");
+    setHeuristicState("idle");
+    heuristicStateRef.current = "idle";
+    setHeuristicResult(null);
+    setScore(0);
+    setCorrect(false);
+    capturedFramesRef.current = [];
+  }, []);
+
+  const goToNextLetter = useCallback(() => {
+    console.log("➡️ goToNextLetter - Avanzando al siguiente saludo");
+    const nextIdx = idx + 1;
+    if (nextIdx >= items.length) {
+      setIdx(0);
+      console.log("🎉 ¡Completaste todos los saludos! Comenzando de nuevo...");
+    } else {
+      setIdx(nextIdx);
+      console.log(`➡️ Avanzando a saludo ${nextIdx + 1}`);
+    }
+    resetScoreForCurrent();
+  }, [idx, items.length, resetScoreForCurrent]);
+
+  const startHeuristic = useCallback(() => {
+    if (heuristicStateRef.current !== "idle") {
+      console.log("⚠️ Ya hay un proceso activo, ignorando startHeuristic");
+      return;
+    }
+
+    console.log("\n🎬 INICIANDO PROCESO HEURÍSTICO");
+    console.log("======================================");
+
+    setHeuristicState("countdown");
+    heuristicStateRef.current = "countdown";
+    setCountdown(3);
+    capturedFramesRef.current = [];
+
+    let count = 3;
+    countdownTimerRef.current = window.setInterval(() => {
+      count--;
+      console.log(`⏳ Cuenta regresiva: ${count}`);
+      setCountdown(count);
+
+      if (count <= 0) {
+        if (countdownTimerRef.current) {
+          clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+        }
+
+        console.log("📸 ¡Cuenta regresiva terminada! Iniciando captura de frames...");
+        setHeuristicState("capturing");
+        heuristicStateRef.current = "capturing";
+        capturedFramesRef.current = [];
+
+        window.setTimeout(() => {
+          console.log(`📦 Captura finalizada. Total de frames: ${capturedFramesRef.current.length}`);
+
+          if (capturedFramesRef.current.length < HEURISTIC_CFG.MIN_FRAMES) {
+            console.log(`⚠️ Frames insuficientes (${capturedFramesRef.current.length} < ${HEURISTIC_CFG.MIN_FRAMES})`);
+            alert(`No se detectó suficiente movimiento. Frames: ${capturedFramesRef.current.length}/${HEURISTIC_CFG.MIN_FRAMES}`);
+            setHeuristicState("idle");
+            heuristicStateRef.current = "idle";
+            return;
+          }
+
+          analyzeCapture();
+        }, HEURISTIC_CFG.CAPTURE_DURATION);
+      }
+    }, 1000);
+  }, [analyzeCapture]);
+
+  // Cargar plantillas (en modo demo no las usamos realmente)
+  useEffect(() => {
+    if (!open || items.length === 0) return;
+
+    let active = true;
+    const currentLabel = items[idx]?.label;
+    if (!currentLabel) return;
+
+    (async () => {
+      try {
+        console.log(`\n📚 Cargando plantillas para saludo "${currentLabel}"...`);
+
+        const waitForCamera = () => {
+          return new Promise<void>((resolve) => {
+            const check = () => {
+              if (cameraReadyRef.current) {
+                console.log("✅ Cámara lista, continuando con carga de plantillas");
+                resolve();
+              } else {
+                console.log("⏳ Esperando a que la cámara esté lista...");
+                setTimeout(check, 200);
+              }
+            };
+            check();
+          });
+        };
+
+        waitForCamera();
+
+        // En modo demo no cargamos plantillas reales, solo simulamos
+        console.log(`✅ Modo demo - plantillas simuladas para "${currentLabel}"`);
+
+      } catch (err) {
+        console.error(`❌ Error en preparación para "${currentLabel}":`, err);
+      }
+    })();
+
+    return () => {
+      active = false;
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+      }
+    };
+  }, [open, items.length]);
+
+  // Inicialización de cámara (igual que otros modales)
+  const initializeCamera = useCallback(async () => {
+    console.log("🔒 [initializeCamera] Iniciando inicialización única...");
+
+    try {
+      console.log("📷 Solicitando acceso a cámara...");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      console.log("✅ Stream de cámara obtenido");
+      streamRef.current = stream;
+
+      if (videoRef.current && mountedRef.current) {
+        videoRef.current.srcObject = stream;
+
+        let playAttempts = 0;
+        const maxAttempts = 3;
+
+        while (playAttempts < maxAttempts && mountedRef.current) {
+          try {
+            await videoRef.current.play();
+            console.log("✅ Video reproduciendo correctamente");
+            break;
+          } catch (playError: any) {
+            playAttempts++;
+
+            if ((playError.name === 'AbortError' || playError.name === 'DOMException') && playAttempts < maxAttempts) {
+              console.log(`⚠️ Video abortado (intento ${playAttempts}/${maxAttempts}), reintentando en 100ms...`);
+              await new Promise(resolve => setTimeout(resolve, 100));
+
+              if (!mountedRef.current) {
+                console.log("ℹ️ Componente desmontado, cancelando reintentos");
+                return;
+              }
+              continue;
+            }
+
+            console.log("ℹ️ Error al reproducir video, continuando de todas formas:", playError.name);
+            break;
+          }
+        }
+      }
+
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+      });
+      hands.setOptions({
+        selfieMode: true,
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6,
+      });
+
+      hands.onResults((results: Results) => {
+        const canvasEl = canvasRef.current;
+        const videoEl = videoRef.current;
+        if (!canvasEl || !videoEl) return;
+
+        const ctx = canvasEl.getContext("2d");
+        if (!ctx) return;
+
+        const w = (canvasEl.width = videoEl.videoWidth || 1280);
+        const h = (canvasEl.height = videoEl.videoHeight || 720);
+
+        ctx.clearRect(0, 0, w, h);
+
+        if (results.image) {
+          ctx.drawImage(results.image as any, 0, 0, w, h);
+        }
+
+        const hand = results.multiHandLandmarks?.[0];
+        if (hand) {
+          drawConnectors(ctx as any, hand as any, HAND_CONNECTIONS, {
+            lineWidth: 2,
+            color: "#ffffff",
+          });
+          ctx.save();
+          ctx.fillStyle = "#22c55e";
+          ctx.strokeStyle = "#065f46";
+          ctx.lineWidth = 1.5;
+          const R = Math.max(2.5, Math.min(w, h) * 0.006);
+          for (const p of hand) {
+            const x = p.x * w;
+            const y = p.y * h;
+            ctx.beginPath();
+            ctx.arc(x, y, R, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+          ctx.restore();
+
+          if (heuristicStateRef.current === "capturing") {
+            const frame = parseLandmarks(hand.map(p => ({ x: p.x, y: p.y, z: p.z ?? 0 })));
+            capturedFramesRef.current.push(frame);
+          }
+        }
+      });
+
+      handsRef.current = hands;
+
+      const processFrame = async () => {
+        if (!videoRef.current || !handsRef.current || sendingRef.current) return;
+        sendingRef.current = true;
+        await handsRef.current.send({ image: videoRef.current as any });
+        sendingRef.current = false;
+        rafRef.current = requestAnimationFrame(processFrame);
+      };
+      rafRef.current = requestAnimationFrame(processFrame);
+
+      cameraReadyRef.current = true;
+      console.log("✅✅✅ Cámara COMPLETAMENTE inicializada y lista para usar ✅✅✅");
+    } catch (err) {
+      console.error("❌ Error en initializeCamera:", err);
+      cameraReadyRef.current = false;
+
+      if (mountedRef.current) {
+        alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
+      }
+      throw err;
+    }
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    if (cameraReadyRef.current) {
+      console.log("⚠️ [startCamera] Cámara ya lista, ignorando");
+      return;
+    }
+
+    if (!mountedRef.current) {
+      console.log("⚠️ [startCamera] Componente no montado, cancelando");
+      return;
+    }
+
+    console.log("🚀 [startCamera] Inicializando cámara por primera vez...");
+    try {
+      await initializeCamera();
+      console.log("✅ [startCamera] Cámara inicializada correctamente");
+    } catch (err) {
+      console.error("❌ [startCamera] Error al inicializar:", err);
+    }
+  }, [initializeCamera]);
+
+  // Limpieza
+  const cleanup = useCallback(() => {
+    console.log("🧹 Limpiando recursos...");
+
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+
+    if (handsRef.current) {
+      handsRef.current.close();
+      handsRef.current = null;
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+
+    if (autoNextRef.current) {
+      window.clearTimeout(autoNextRef.current);
+      autoNextRef.current = null;
+    }
+
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+
+    cameraReadyRef.current = false;
+    mountedRef.current = false;
+
+    setHeuristicState("idle");
+    heuristicStateRef.current = "idle";
+    capturedFramesRef.current = [];
+
+    console.log("✅ Recursos limpiados");
+  }, []);
+
+  // Iniciar cámara cuando se abre el modal
+  useEffect(() => {
+    if (!open) return;
+
+    mountedRef.current = true;
+    console.log("🔵 [useEffect open] Modal saludos abierto, llamando startCamera()...");
+
+    if (!cameraReadyRef.current) {
+      startCamera();
+    } else {
+      console.log("⚠️ [useEffect open] Cámara ya está inicializada, no reiniciar");
+    }
+
+    return () => {
+      console.log("🔴 [useEffect open] Modal cerrado, limpiando...");
+      cleanup();
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  const pct = Math.round(score);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Prueba de Saludos"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.55)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+        padding: 16,
+      }}
+    >
+      <div
+        style={{
+          width: "min(1200px, 100%)",
+          maxHeight: "95vh",
+          background: "#0b0f1a",
+          color: "#e5e7eb",
+          borderRadius: 16,
+          boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header modal */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            padding: "12px 16px",
+            borderBottom: "1px solid #1f2937",
+            gap: 12,
+          }}
+        >
+          <Camera size={18} />
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>
+            Prueba: Saludos (Modo Demo)
+          </h3>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <button
+              onClick={() => {
+                console.log("💾 Guardando progreso manualmente...");
+                if (onSaveProgress) {
+                  onSaveProgress();
+                }
+                const btn = document.activeElement as HTMLButtonElement;
+                const originalText = btn.textContent;
+                btn.textContent = "✅ Guardado!";
+                btn.style.background = "#065f46";
+                setTimeout(() => {
+                  btn.textContent = originalText;
+                  btn.style.background = "#059669";
+                }, 1500);
+              }}
+              title="Guardar progreso actual y actualizar la barra"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 10px",
+                borderRadius: 8,
+                background: "#059669",
+                border: "1px solid #10b981",
+                color: "#e5e7eb",
+                cursor: "pointer",
+                fontWeight: 500,
+              }}
+            >
+              💾 Guardar Progreso
+            </button>
+            <button
+              onClick={() => {
+                forceRejectNextRef.current = true;
+                console.log("🎭 DEMO: Botón 'Siguiente →' presionado - próximo saludo será RECHAZADO");
+
+                const nextIdx = idx + 1;
+                if (nextIdx >= items.length) {
+                  setIdx(0);
+                } else {
+                  setIdx(nextIdx);
+                }
+                resetScoreForCurrent();
+              }}
+              title="Saltar al siguiente saludo (el siguiente será rechazado para demo)"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 10px",
+                borderRadius: 8,
+                background: "#1e3a8a",
+                border: "1px solid #3b82f6",
+                color: "#e5e7eb",
+                cursor: "pointer",
+              }}
+            >
+              Siguiente →
+            </button>
+            <button
+              onClick={() => {
+                cleanup();
+                onClose();
+              }}
+              title="Cerrar"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 10px",
+                borderRadius: 8,
+                background: "#111827",
+                border: "1px solid #1f2937",
+                color: "#e5e7eb",
+                cursor: "pointer",
+              }}
+            >
+              <X size={16} /> Cerrar
+            </button>
+          </div>
+        </div>
+
+        {/* Cuerpo: video objetivo + cámara */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1.5fr",
+            gap: 12,
+            padding: 12,
+          }}
+        >
+          {/* Video objetivo */}
+          <div
+            style={{
+              background: "#0f172a",
+              border: "1px solid #1f2937",
+              borderRadius: 12,
+              minHeight: 300,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ padding: 10, borderBottom: "1px solid #1f2937" }}>
+              <strong>Video objetivo</strong>
+            </div>
+            <div
+              style={{
+                flex: 1,
+                display: "grid",
+                placeItems: "center",
+                padding: 8,
+                background: "#f1f5f9",
+              }}
+            >
+              {loading ? (
+                <span style={{ opacity: 0.8, color: "#0f172a" }}>Cargando videos…</span>
+              ) : items.length === 0 ? (
+                <span style={{ opacity: 0.8, color: "#0f172a" }}>No hay videos en Firebase.</span>
+              ) : (
+                <video
+                  src={items[idx]?.url}
+                  controls
+                  preload="metadata"
+                  playsInline
+                  style={{
+                    maxWidth: "100%",
+                    maxHeight: "100%",
+                    objectFit: "contain",
+                    borderRadius: 8,
+                  }}
+                />
+              )}
+            </div>
+
+            {/* Controles de navegación manual */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: 10,
+                borderTop: "1px solid #1f2937",
+              }}
+            >
+              <button
+                onClick={() => setIdx((p) => (p > 0 ? p - 1 : p))}
+                disabled={idx === 0 || items.length === 0}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  background: "#111827",
+                  border: "1px solid #1f2937",
+                  color: "#e5e7eb",
+                  cursor: idx === 0 || items.length === 0 ? "not-allowed" : "pointer",
+                }}
+              >
+                <Left size={16} /> Anterior
+              </button>
+
+              <div style={{ marginLeft: "auto" }}>
+                <span style={{ fontSize: 12, opacity: 0.8 }}>
+                  {items.length ? `${idx + 1} / ${items.length}` : "—"}
+                </span>
+              </div>
+
+              <button
+                onClick={() => {
+                  forceRejectNextRef.current = true;
+                  console.log("🎭 DEMO: Botón 'Siguiente' presionado - próximo saludo será RECHAZADO");
+
+                  setIdx((p) => (items.length ? Math.min(p + 1, items.length - 1) : p));
+                  resetScoreForCurrent();
+                }}
+                disabled={items.length === 0 || idx === items.length - 1}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  background: "#2563eb",
+                  border: "1px solid #1e40af",
+                  color: "white",
+                  cursor:
+                    items.length === 0 || idx === items.length - 1 ? "not-allowed" : "pointer",
+                }}
+              >
+                Siguiente <Right size={16} />
+              </button>
+            </div>
+
+            {/* Botón de analizar */}
+            <div style={{ padding: 10, borderTop: "1px solid #1f2937" }}>
+              <button
+                onClick={startHeuristic}
+                disabled={
+                  heuristicState !== "idle" ||
+                  items.length === 0 ||
+                  !cameraReadyRef.current
+                }
+                title={
+                  !cameraReadyRef.current
+                    ? "Esperando cámara..."
+                    : heuristicState !== "idle"
+                    ? "Ya hay un proceso en curso"
+                    : "Analizar seña con el sistema heurístico"
+                }
+                style={{
+                  width: "100%",
+                  padding: "12px 16px",
+                  borderRadius: 8,
+                  background:
+                    heuristicState !== "idle" || !cameraReadyRef.current
+                      ? "#374151"
+                      : "#16a34a",
+                  border:
+                    heuristicState !== "idle" || !cameraReadyRef.current
+                      ? "1px solid #4b5563"
+                      : "1px solid #15803d",
+                  color: "#fff",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor:
+                    heuristicState !== "idle" || items.length === 0 || !cameraReadyRef.current
+                      ? "not-allowed"
+                      : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                }}
+              >
+                {!cameraReadyRef.current && heuristicState === "idle" ? (
+                  <>⏳ Iniciando cámara...</>
+                ) : heuristicState === "countdown" ? (
+                  <>⏱️ Preparando...</>
+                ) : heuristicState === "capturing" ? (
+                  <>📸 Capturando...</>
+                ) : heuristicState === "analyzing" ? (
+                  <>🔄 Analizando...</>
+                ) : heuristicState === "result" ? (
+                  <>✅ Resultado listo</>
+                ) : (
+                  <>🚀 Analizar seña</>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Cámara en vivo - igual que los otros modales */}
+          <div
+            style={{
+              background: "#0f172a",
+              border: "1px solid #1f2937",
+              borderRadius: 12,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              position: "relative",
+            }}
+          >
+            <div style={{ padding: 10, borderBottom: "1px solid #1f2937" }}>
+              <strong>Cámara en vivo</strong>
+            </div>
+            <div
+              style={{
+                flex: 1,
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden",
+              }}
+            >
+              <video
+                ref={videoRef}
+                style={{
+                  position: "absolute",
+                  width: 1,
+                  height: 1,
+                  opacity: 0,
+                  pointerEvents: "none",
+                }}
+                playsInline
+              />
+              <canvas
+                ref={canvasRef}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                  borderRadius: 8,
+                }}
+              />
+
+              {/* Overlays para estados - igual que otros modales */}
+              {heuristicState === "countdown" && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.75)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div style={{ fontSize: 120, fontWeight: 800, marginBottom: 24 }}>
+                    {countdown}
+                  </div>
+                  <div style={{ fontSize: 18, opacity: 0.9 }}>Prepárate...</div>
+                </div>
+              )}
+
+              {heuristicState === "capturing" && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 12,
+                    left: 12,
+                    background: "rgba(220, 38, 38, 0.85)",
+                    color: "#fff",
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 999,
+                        background: "#fff",
+                        animation: "pulse 1s infinite",
+                      }}
+                    />
+                    CAPTURANDO
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    Capturando... {capturedFramesRef.current.length} frames
+                  </div>
+                </div>
+              )}
+
+              {heuristicState === "analyzing" && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.85)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>
+                    Analizando...
+                  </div>
+                  <div style={{ fontSize: 14, opacity: 0.8 }}>
+                    Modo demo activo
+                  </div>
+                </div>
+              )}
+
+              {heuristicState === "result" && heuristicResult && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.90)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 72,
+                      fontWeight: 800,
+                      color: heuristicResult.decision === "accepted" ? "#16a34a" : "#dc2626",
+                      marginBottom: 24,
+                    }}
+                  >
+                    {heuristicResult.score}%
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>
+                    {heuristicResult.decision === "accepted" ? "✅ ¡Correcto!" : "❌ Incorrecto"}
+                  </div>
+                  <div style={{ fontSize: 14, opacity: 0.8, marginBottom: 24 }}>
+                    {heuristicResult.decision === "accepted"
+                      ? "¡Excelente! Presiona Siguiente para continuar"
+                      : "Intenta de nuevo"}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 12 }}>
+                    {heuristicResult.decision === "accepted" ? (
+                      <button
+                        onClick={goToNextLetter}
+                        style={{
+                          padding: "12px 24px",
+                          borderRadius: 8,
+                          background: "#16a34a",
+                          border: "1px solid #15803d",
+                          color: "white",
+                          fontSize: 14,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Siguiente →
+                      </button>
+                    ) : (
+                      <button
+                        onClick={retryHeuristic}
+                        style={{
+                          padding: "12px 24px",
+                          borderRadius: 8,
+                          background: "#2563eb",
+                          border: "1px solid #1e40af",
+                          color: "white",
+                          fontSize: 14,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Intentar de nuevo
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Barra de coincidencia */}
+            <div
+              style={{
+                padding: 12,
+                borderTop: "1px solid #1f2937",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <div style={{ minWidth: 140, fontSize: 13, opacity: 0.85 }}>
+                Nivel de coincidencia
+              </div>
+              <div
+                aria-label="Nivel de coincidencia"
+                style={{
+                  position: "relative",
+                  flex: 1,
+                  height: 14,
+                  background: "#111827",
+                  border: "1px solid #1f2937",
+                  borderRadius: 999,
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    width: `${pct}%`,
+                    height: "100%",
+                    background: pct >= 60 ? "#16a34a" : "#2563eb",
+                    transition: "width 120ms linear",
+                  }}
+                />
+                <div
+                  style={{
+                    position: "absolute",
+                    right: 8,
+                    top: 0,
+                    bottom: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    fontSize: 12,
+                    opacity: 0.9,
+                  }}
+                >
+                  {pct}%
+                </div>
+              </div>
+
+              {correct ? (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 13,
+                    color: "#22c55e",
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <CheckCircle size={16} /> ¡Correcto!
+                </span>
+              ) : (
+                <span style={{ fontSize: 12, opacity: 0.7, whiteSpace: "nowrap" }}>
+                  Mínimo: 60%
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Responsive */}
+        <style>{`
+          @media (max-width: 900px) {
+            [role="dialog"] > div > div:nth-child(2) {
+              grid-template-columns: 1fr !important;
+            }
+          }
+        `}</style>
+      </div>
+    </div>
+  );
+}
+
 // =================== Página principal ===================
 export default function TestsPage() {
   const { user } = useAuth();
@@ -2412,6 +3514,8 @@ export default function TestsPage() {
   const [abcStartIndex, setAbcStartIndex] = useState(0); // Índice inicial del abecedario
   const [showNumerosModal, setShowNumerosModal] = useState(false);
   const [numerosStartIndex, setNumerosStartIndex] = useState(0); // Índice inicial de números
+  const [showSaludosModal, setShowSaludosModal] = useState(false);
+  const [saludosStartIndex, setSaludosStartIndex] = useState(0); // Índice inicial de saludos
 
   // Cargar estadísticas del usuario
   const loadStats = useCallback(async (silent = false) => {
@@ -2506,6 +3610,8 @@ export default function TestsPage() {
       m.id.toLowerCase() === "abecedario" || m.name.toLowerCase() === "abecedario";
     const isNumeros =
       m.id.toLowerCase() === "numeros" || m.name.toLowerCase() === "números";
+    const isSaludos =
+      m.id.toLowerCase() === "frases_saludos" || m.name.toLowerCase() === "frases/saludos";
 
     if (isAbc) {
       // Establecer índice inicial desde el progreso guardado
@@ -2523,6 +3629,14 @@ export default function TestsPage() {
       setNumerosStartIndex(startIdx);
       console.log(`🔢 Abriendo números desde índice ${startIdx + 1}`);
       setShowNumerosModal(true);
+    } else if (isSaludos) {
+      // Establecer índice inicial desde el progreso guardado
+      const startIdx = m.currentLetterIndex ?? 0;
+      console.log(`💬 onAction - Módulo SALUDOS recibido:`, m);
+      console.log(`💬 onAction - currentLetterIndex: ${m.currentLetterIndex}, startIdx: ${startIdx}`);
+      setSaludosStartIndex(startIdx);
+      console.log(`💬 Abriendo saludos desde índice ${startIdx + 1}`);
+      setShowSaludosModal(true);
     } else {
       alert("Pronto disponible para este módulo.");
     }
@@ -2606,7 +3720,9 @@ export default function TestsPage() {
               m.id.toLowerCase() === "abecedario" || m.name.toLowerCase() === "abecedario";
             const isNumeros =
               m.id.toLowerCase() === "numeros" || m.name.toLowerCase() === "números";
-            const isAvailable = isAbc || isNumeros;
+            const isSaludos =
+              m.id.toLowerCase() === "frases_saludos" || m.name.toLowerCase() === "frases/saludos";
+            const isAvailable = isAbc || isNumeros || isSaludos;
 
             return (
               <article key={m.id} className={s.card}>
@@ -2692,6 +3808,22 @@ export default function TestsPage() {
           loadStats(); // SIN silent - fuerza actualización visible
         }}
         initialIndex={numerosStartIndex} // Iniciar desde el número guardado
+      />
+
+      {/* Modal de Saludos */}
+      <SaludosTestModal
+        open={showSaludosModal}
+        onClose={() => {
+          setShowSaludosModal(false);
+          // Actualizar estadísticas cuando se cierra el modal
+          loadStats(true);
+        }}
+        onProgressUpdate={() => loadStats(true)} // silent = true para evitar re-renders
+        onSaveProgress={() => {
+          console.log("🔄 Forzando actualización de estadísticas desde botón Guardar (SALUDOS)...");
+          loadStats(); // SIN silent - fuerza actualización visible
+        }}
+        initialIndex={saludosStartIndex} // Iniciar desde el saludo guardado
       />
     </>
   );
