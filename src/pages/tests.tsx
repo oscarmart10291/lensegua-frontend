@@ -102,13 +102,16 @@ function AbecedarioTestModal({
   const rafRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
 
-  // Sistema heurístico
-  const [capturing, setCapturing] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
+  // Sistema heurístico - Estados y refs
+  type HeuristicState = "idle" | "countdown" | "capturing" | "analyzing" | "result";
+  const [heuristicState, setHeuristicState] = useState<HeuristicState>("idle");
+  const heuristicStateRef = useRef<HeuristicState>("idle");
+  const [countdown, setCountdown] = useState(3);
+  const countdownTimerRef = useRef<number | null>(null);
   const capturedFramesRef = useRef<Sequence>([]);
-  const captureStartRef = useRef(0);
   const templatesRef = useRef<Template[]>([]);
   const templateDictRef = useRef<TemplateDict>({});
+  const [heuristicResult, setHeuristicResult] = useState<{ score: number; decision: string; distance: number } | null>(null);
 
   // Cargar imágenes del abecedario desde Firebase
   useEffect(() => {
@@ -138,9 +141,16 @@ function AbecedarioTestModal({
   const resetScoreForCurrent = useCallback(() => {
     setScore(0);
     setCorrect(false);
+    setHeuristicState("idle");
+    heuristicStateRef.current = "idle";
+    setHeuristicResult(null);
     if (autoNextRef.current) {
       window.clearTimeout(autoNextRef.current);
       autoNextRef.current = null;
+    }
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
     }
   }, []);
 
@@ -148,6 +158,47 @@ function AbecedarioTestModal({
     if (!open) return;
     resetScoreForCurrent();
   }, [open, idx, resetScoreForCurrent]);
+
+  // Funciones para el flujo heurístico
+  const startHeuristicCountdown = useCallback(() => {
+    setHeuristicState("countdown");
+    heuristicStateRef.current = "countdown";
+    setCountdown(3);
+    capturedFramesRef.current = [];
+
+    let count = 3;
+    countdownTimerRef.current = window.setInterval(() => {
+      count--;
+      setCountdown(count);
+      if (count === 0) {
+        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+        startCapture();
+      }
+    }, 1000);
+  }, []);
+
+  const startCapture = useCallback(() => {
+    setHeuristicState("capturing");
+    heuristicStateRef.current = "capturing";
+    setCountdown(3); // 3 segundos para realizar la seña
+    capturedFramesRef.current = [];
+
+    let count = 3;
+    countdownTimerRef.current = window.setInterval(() => {
+      count--;
+      setCountdown(count);
+      if (count === 0) {
+        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+        analyzeCapture();
+      }
+    }, 1000);
+  }, []);
+
+  const retryHeuristic = useCallback(() => {
+    setHeuristicResult(null);
+    capturedFramesRef.current = [];
+    startHeuristicCountdown();
+  }, [startHeuristicCountdown]);
 
   // Cargar plantillas heurísticas cuando cambia la letra
   useEffect(() => {
@@ -188,6 +239,10 @@ function AbecedarioTestModal({
 
           console.log(`✅ Pre-cargadas ${Object.keys(templateDictRef.current).length} letras`);
         }
+
+        // Iniciar countdown automáticamente cuando las plantillas estén listas
+        if (!active) return;
+        startHeuristicCountdown();
       } catch (err) {
         console.error(`❌ Error cargando plantillas para "${currentLabel}":`, err);
       }
@@ -195,8 +250,12 @@ function AbecedarioTestModal({
 
     return () => {
       active = false;
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+      }
     };
-  }, [open, idx, items]);
+  }, [open, idx, items, startHeuristicCountdown]);
 
   // Inicializar cámara y MediaPipe
   const startCamera = useCallback(async () => {
@@ -257,26 +316,13 @@ function AbecedarioTestModal({
             ctx.stroke();
           }
 
-          // Capturar frames si estamos en modo captura
-          if (capturing && !analyzing) {
+          // Capturar frames solo durante el estado "capturing"
+          if (heuristicStateRef.current === "capturing") {
             const frame = parseLandmarks(hand.map(p => ({ x: p.x, y: p.y, z: p.z ?? 0 })));
             capturedFramesRef.current.push(frame);
           }
         }
         ctx.restore();
-
-        // Gestión automática de captura y análisis
-        const now = performance.now();
-        if (!capturing && !analyzing && !correct) {
-          setCapturing(true);
-          capturedFramesRef.current = [];
-          captureStartRef.current = now;
-        }
-
-        if (capturing && now - captureStartRef.current >= HEURISTIC_CFG.CAPTURE_DURATION) {
-          setCapturing(false);
-          analyzeCapture();
-        }
       });
 
       handsRef.current = hands;
@@ -301,38 +347,51 @@ function AbecedarioTestModal({
     const captured = capturedFramesRef.current;
     const currentLabel = items[idx]?.label;
 
+    console.log(`\n======================================`);
+    console.log(`🔍 ANÁLISIS DE SEÑA: "${currentLabel}"`);
+    console.log(`======================================`);
+
+    // Cambiar a estado "analyzing"
+    setHeuristicState("analyzing");
+    heuristicStateRef.current = "analyzing";
+
     if (captured.length < HEURISTIC_CFG.MIN_FRAMES) {
       console.log(`⚠️ Pocos frames capturados: ${captured.length} < ${HEURISTIC_CFG.MIN_FRAMES}`);
-      setAnalyzing(false);
-      capturedFramesRef.current = [];
-      captureStartRef.current = 0;
-      setCapturing(false);
+      setHeuristicResult({
+        score: 0,
+        decision: "rejected",
+        distance: 999,
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
       return;
     }
 
     if (!currentLabel) {
       console.log("⚠️ No hay letra seleccionada");
-      setAnalyzing(false);
+      setHeuristicState("idle");
+      heuristicStateRef.current = "idle";
       return;
     }
-
-    setAnalyzing(true);
 
     try {
       const targetTemplates = templatesRef.current;
 
       if (targetTemplates.length === 0) {
         console.warn(`⚠️ No hay plantillas para "${currentLabel}"`);
-        setScore(0);
-        setAnalyzing(false);
-        capturedFramesRef.current = [];
-        captureStartRef.current = 0;
-        setCapturing(false);
+        setHeuristicResult({
+          score: 0,
+          decision: "rejected",
+          distance: 999,
+        });
+        setHeuristicState("result");
+        heuristicStateRef.current = "result";
         return;
       }
 
       // Seleccionar impostores (otras letras)
       const impostors = selectImpostorTemplates(templateDictRef.current, currentLabel, 5);
+      console.log(`👥 Impostores seleccionados: ${impostors.length} letras diferentes`);
 
       console.log(`🔍 Analizando ${captured.length} frames contra ${targetTemplates.length} plantillas de "${currentLabel}"`);
 
@@ -340,20 +399,31 @@ function AbecedarioTestModal({
       const result = matchSequence(captured, targetTemplates, DEFAULT_CONFIG, impostors);
 
       const finalScore = Math.round(result.score);
+
+      console.log(`\n📈 RESULTADO:`);
+      console.log(`   Score: ${finalScore}%`);
+      console.log(`   Decision: ${result.decision}`);
+      console.log(`   Distance: ${result.distance.toFixed(4)}`);
+      console.log(`   Mejor plantilla: ${result.bestTemplateId}`);
+      if (result.topCandidates && result.topCandidates.length > 0) {
+        console.log(`   Top 3 candidatos:`);
+        result.topCandidates.forEach((c, i) => {
+          console.log(`      ${i + 1}. ${c.letter}: ${c.distance.toFixed(4)}`);
+        });
+      }
+      console.log(`======================================\n`);
+
       setScore(finalScore);
-
-      console.log(`📊 Resultado: ${result.decision} (score: ${finalScore}%)`);
-      console.log(`   - Mejor plantilla: ${result.bestTemplateId}`);
-      console.log(`   - Distancia: ${result.distance.toFixed(4)}`);
-      console.log(`   - Detalles: ${result.details}`);
-
-      setAnalyzing(false);
-      capturedFramesRef.current = [];
-      captureStartRef.current = 0;
-      setCapturing(false);
+      setHeuristicResult({
+        score: finalScore,
+        decision: result.decision,
+        distance: result.distance,
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
 
       // Si es correcto, registrar en DB y auto-avanzar
-      if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE && !correct) {
+      if (result.decision === "accepted" && finalScore >= HEURISTIC_CFG.MIN_SCORE) {
         setCorrect(true);
 
         registrarIntento("abecedario", finalScore, true)
@@ -370,31 +440,31 @@ function AbecedarioTestModal({
             console.error("❌ Error al registrar intento:", err);
           });
 
-        // Auto-avanzar a la siguiente letra
-        if (!autoNextRef.current) {
-          autoNextRef.current = window.setTimeout(() => {
-            autoNextRef.current = null;
-            setCorrect(false);
-            setIdx((p) => {
-              const nextIdx = p + 1;
-              if (nextIdx >= items.length) {
-                alert("¡Test finalizado! ✅");
-                return p;
-              }
-              return nextIdx;
-            });
-          }, 1500);
-        }
+        // Auto-avanzar a la siguiente letra después de 2 segundos
+        autoNextRef.current = window.setTimeout(() => {
+          autoNextRef.current = null;
+          setCorrect(false);
+          setIdx((p) => {
+            const nextIdx = p + 1;
+            if (nextIdx >= items.length) {
+              alert("¡Test finalizado! ✅");
+              return p;
+            }
+            return nextIdx;
+          });
+        }, 2000);
       }
     } catch (err) {
       console.error("❌ Error en análisis heurístico:", err);
-      setScore(0);
-      setAnalyzing(false);
-      capturedFramesRef.current = [];
-      captureStartRef.current = 0;
-      setCapturing(false);
+      setHeuristicResult({
+        score: 0,
+        decision: "rejected",
+        distance: 999,
+      });
+      setHeuristicState("result");
+      heuristicStateRef.current = "result";
     }
-  }, [items, idx, correct, onProgressUpdate]);
+  }, [items, idx, onProgressUpdate]);
 
   // Limpieza
   const cleanup = useCallback(() => {
@@ -416,11 +486,15 @@ function AbecedarioTestModal({
       autoNextRef.current = null;
     }
 
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+
     // Limpiar estado heurístico
-    setCapturing(false);
-    setAnalyzing(false);
+    setHeuristicState("idle");
+    heuristicStateRef.current = "idle";
     capturedFramesRef.current = [];
-    captureStartRef.current = 0;
   }, []);
 
   useEffect(() => {
@@ -653,6 +727,136 @@ function AbecedarioTestModal({
                   height: "100%",
                 }}
               />
+
+              {/* Overlay para countdown (preparación) */}
+              {heuristicState === "countdown" && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.85)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div style={{ fontSize: 96, fontWeight: 800, marginBottom: 24 }}>
+                    {countdown}
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>
+                    Prepárate...
+                  </div>
+                  <div style={{ fontSize: 14, opacity: 0.8, textAlign: "center", maxWidth: 300 }}>
+                    La captura iniciará cuando llegue a cero.
+                  </div>
+                </div>
+              )}
+
+              {/* Overlay para capturing (capturando seña) */}
+              {heuristicState === "capturing" && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.70)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div style={{ fontSize: 96, fontWeight: 800, color: "#16a34a", marginBottom: 24 }}>
+                    {countdown}
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#16a34a", marginBottom: 12 }}>
+                    ¡Ahora!
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+                    Realiza la seña de <strong>{items[idx]?.label}</strong>
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    Capturando... {capturedFramesRef.current.length} frames
+                  </div>
+                </div>
+              )}
+
+              {/* Overlay para analyzing */}
+              {heuristicState === "analyzing" && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.85)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>
+                    Analizando...
+                  </div>
+                  <div style={{ fontSize: 14, opacity: 0.8 }}>
+                    Comparando con {templatesRef.current.length} plantillas
+                  </div>
+                </div>
+              )}
+
+              {/* Overlay para result */}
+              {heuristicState === "result" && heuristicResult && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(11, 15, 26, 0.90)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 72,
+                      fontWeight: 800,
+                      color: heuristicResult.decision === "accepted" ? "#16a34a" : "#dc2626",
+                      marginBottom: 24,
+                    }}
+                  >
+                    {heuristicResult.score}%
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>
+                    {heuristicResult.decision === "accepted" ? "✅ ¡Correcto!" : "❌ Incorrecto"}
+                  </div>
+                  <div style={{ fontSize: 14, opacity: 0.8, marginBottom: 24 }}>
+                    {heuristicResult.decision === "accepted"
+                      ? "¡Excelente! Avanzando a la siguiente letra..."
+                      : "Intenta de nuevo"}
+                  </div>
+                  {heuristicResult.decision !== "accepted" && (
+                    <button
+                      onClick={retryHeuristic}
+                      style={{
+                        padding: "12px 24px",
+                        borderRadius: 8,
+                        background: "#2563eb",
+                        border: "1px solid #1e40af",
+                        color: "white",
+                        fontSize: 14,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Intentar de nuevo
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Barra de coincidencia */}
