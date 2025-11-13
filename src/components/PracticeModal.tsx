@@ -448,8 +448,8 @@ export default function PracticeModal({
         probsArr = await tf.tidy(() => {
           const x = tf.tensor(frameVec, [1, vecLen!]);
           const out = model.predict(x) as tf.Tensor;
-          const soft = tf.softmax(out);
-          return soft.dataSync();
+          // NO aplicar softmax - el modelo ya lo tiene en la capa de salida
+          return out.dataSync();
         });
       } else {
         const { T, F } = seqShape!;
@@ -461,8 +461,8 @@ export default function PracticeModal({
         probsArr = await tf.tidy(() => {
           const x = tf.tensor(win, [1, T, F]);
           const out = model.predict(x) as tf.Tensor;
-          const soft = tf.softmax(out);
-          return soft.dataSync();
+          // NO aplicar softmax - el modelo ya lo tiene en la capa de salida
+          return out.dataSync();
         });
       }
     } else if (inputKind === "image" && imgShape) {
@@ -477,15 +477,22 @@ export default function PracticeModal({
         img = img.toFloat().div(255);
         const x = img.expandDims(0);
         const out = model.predict(x) as tf.Tensor;
-        const soft = tf.softmax(out);
-        return soft.dataSync();
+        // NO aplicar softmax - el modelo ya lo tiene en la capa de salida
+        return out.dataSync();
       });
     }
     if (!probsArr) return;
 
-    // top-1
+    // top-1 (solo considerar clases válidas según el mapeo)
+    const validIndices = classIndex ? new Set(Object.values(classIndex)) : null;
     let tIdx = 0, tProb = probsArr[0] ?? 0;
-    for (let i = 1; i < probsArr.length; i++) if (probsArr[i] > tProb) { tProb = probsArr[i]; tIdx = i; }
+
+    for (let i = 1; i < probsArr.length; i++) {
+      // Si hay mapeo, solo considerar índices válidos
+      if (validIndices && !validIndices.has(i)) continue;
+      if (probsArr[i] > tProb) { tProb = probsArr[i]; tIdx = i; }
+    }
+
     setTopIdx(tIdx); setTopProb(tProb);
 
     // score:
